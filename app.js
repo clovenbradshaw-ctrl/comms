@@ -42,7 +42,6 @@ class SecureChat {
         this.peer = null;
         this.conn = null;
         this.roomId = null;
-        this.cryptoKey = null;
         this.roomSalt = null;
         this.roomSaltBase64 = '';
         this.pendingRoomSalt = null;
@@ -59,10 +58,7 @@ class SecureChat {
         this.lastEncryptedHex = '';
         this.outgoingMessageNumber = 1;
         this.expectedIncomingMessageNumber = 1;
-        this.connectionFingerprint = '';
-        this.baseKeyMaterial = null;
         this.keyRotationInterval = 10;
-        this.currentEpoch = 0;
         this.lastRotationMessageCount = 0;
         this.messageRateLimit = {
           timestamps: [],
@@ -70,9 +66,30 @@ class SecureChat {
           maxBurst: 5
         };
         this.heartbeat = null;
-        this.ecdhKeyPair = null;
         this.keyExchangeComplete = false;
         this.sentKeyExchange = false;
+        this.latestFingerprint = '';
+        this.lastAnnouncedEpoch = -1;
+        this.cryptoUpdates = CryptoManager.onUpdated((update) => {
+          const fingerprint = update?.fingerprint || '';
+          this.latestFingerprint = fingerprint;
+          this.updateFingerprintDisplay(fingerprint || null);
+
+          if (update?.reason === 'rotation' && Number.isInteger(update.epoch)) {
+            if (update.epoch !== this.lastAnnouncedEpoch) {
+              this.lastAnnouncedEpoch = update.epoch;
+              this.addSystemMessage('🔄 Security keys rotated');
+            }
+          }
+
+          if (update?.reason === 'static-key' || update?.reason === 'promote') {
+            this.lastAnnouncedEpoch = Number.isInteger(update.epoch) ? update.epoch : 0;
+          }
+
+          if (!fingerprint && update?.reason === 'reset') {
+            this.lastAnnouncedEpoch = -1;
+          }
+        });
 
         this.dom = DOM;
         this.initStorage();
@@ -356,11 +373,13 @@ Password: [share securely via a different channel]
       }
 
       showHost() {
+        CryptoManager.reset();
+        this.latestFingerprint = '';
+        this.lastAnnouncedEpoch = -1;
         this.roomId = this.generateRoomId();
         this.generateRoomSalt();
         this.resetMessageCounters();
         this.pendingRoomSalt = null;
-        this.connectionFingerprint = '';
         this.updateFingerprintDisplay(null);
         const roomCodeDisplay = DOM.roomCode;
         if (roomCodeDisplay) {
@@ -382,6 +401,9 @@ Password: [share securely via a different channel]
       }
 
       showJoin() {
+        CryptoManager.reset();
+        this.latestFingerprint = '';
+        this.lastAnnouncedEpoch = -1;
         if (!this.pendingRoomSalt) {
           const joinSalt = DOM.joinSalt;
           if (joinSalt) {
@@ -562,8 +584,9 @@ Password: [share securely via a different channel]
         }
 
         const salt = crypto.getRandomValues(new Uint8Array(16));
-        this.roomSalt = salt;
-        this.roomSaltBase64 = this.bytesToBase64(salt);
+        CryptoManager.setRoomSalt(salt);
+        this.roomSalt = CryptoManager.getRoomSalt();
+        this.roomSaltBase64 = this.bytesToBase64(this.roomSalt);
         this.updateRoomSaltDisplay();
         return salt;
       }
@@ -603,7 +626,6 @@ Password: [share securely via a different channel]
         this.outgoingMessageNumber = 1;
         this.expectedIncomingMessageNumber = 1;
         this.lastRotationMessageCount = 0;
-        this.currentEpoch = 0;
         if (this.messageRateLimit) {
           this.messageRateLimit.timestamps = [];
         }
@@ -691,12 +713,17 @@ Password: [share securely via a different channel]
 
       // Crypto
       async sendSecureControlMessage(message) {
-        if (!this.conn || !this.cryptoKey) {
+        if (!this.conn || !CryptoManager.getCurrentKey()) {
           return false;
         }
 
         try {
-          const encrypted = await encryptMessage(this.cryptoKey, JSON.stringify(message));
+          const envelope = {
+            kind: 'control',
+            sentAt: Date.now(),
+            control: { ...message }
+          };
+          const encrypted = await CryptoManager.encrypt(JSON.stringify(envelope));
           this.conn.send(encrypted);
           return true;
         } catch (error) {
@@ -706,7 +733,7 @@ Password: [share securely via a different channel]
       }
 
       async rotateKeysIfNeeded() {
-        if (!this.conn || !this.baseKeyMaterial) {
+        if (!this.conn || !CryptoManager.getCurrentKey() || !CryptoManager.hasBaseMaterial()) {
           return;
         }
 
@@ -723,16 +750,7 @@ Password: [share securely via a different channel]
           return;
         }
 
-        const nextEpoch = this.currentEpoch + 1;
-        let nextKey = null;
-
-        try {
-          nextKey = await deriveRatchetKey(this.baseKeyMaterial, nextEpoch, this.roomSalt);
-        } catch (error) {
-          console.error('Failed to derive ratcheted key.', error);
-          this.addSystemMessage('⚠️ Key rotation failed');
-          return;
-        }
+        const nextEpoch = CryptoManager.getCurrentEpoch() + 1;
 
         const sent = await this.sendSecureControlMessage({
           type: 'key_rotation',
@@ -744,10 +762,15 @@ Password: [share securely via a different channel]
           return;
         }
 
-        this.cryptoKey = nextKey;
-        this.currentEpoch = nextEpoch;
-        this.lastRotationMessageCount = messagesSent;
-        this.addSystemMessage('🔄 Security keys rotated');
+        try {
+          const rotated = await CryptoManager.maybeRotate(nextEpoch);
+          if (rotated) {
+            this.lastRotationMessageCount = messagesSent;
+          }
+        } catch (error) {
+          console.error('Failed to rotate local key material.', error);
+          this.addSystemMessage('⚠️ Key rotation failed');
+        }
       }
 
       initHeartbeat() {
@@ -811,20 +834,18 @@ Password: [share securely via a different channel]
 
       async handleIncomingKeyRotation(message) {
         const epoch = Number(message?.epoch);
-        if (!Number.isInteger(epoch) || epoch <= this.currentEpoch) {
-          return;
-        }
-
-        if (!this.baseKeyMaterial) {
-          this.addSystemMessage('⚠️ Received key rotation signal but missing base key');
+        if (!Number.isInteger(epoch)) {
           return;
         }
 
         try {
-          const nextKey = await deriveRatchetKey(this.baseKeyMaterial, epoch, this.roomSalt);
-          this.cryptoKey = nextKey;
-          this.currentEpoch = epoch;
-          this.addSystemMessage('🔄 Security keys rotated');
+          const rotated = await CryptoManager.maybeRotate(epoch);
+          if (!rotated) {
+            if (!CryptoManager.hasBaseMaterial()) {
+              this.addSystemMessage('⚠️ Received key rotation signal but missing base key');
+            }
+            console.warn('Ignored key rotation request for epoch', epoch);
+          }
         } catch (error) {
           console.error('Failed to process incoming key rotation.', error);
           this.addSystemMessage('⚠️ Failed to process key rotation signal');
@@ -871,11 +892,12 @@ Password: [share securely via a different channel]
         }
 
         try {
-          if (!this.ecdhKeyPair) {
-            this.ecdhKeyPair = await generateECDHKeyPair();
+          let keyPair = CryptoManager.getECDHKeyPair();
+          if (!keyPair) {
+            keyPair = await CryptoManager.beginECDH();
           }
 
-          const publicKey = await crypto.subtle.exportKey('raw', this.ecdhKeyPair.publicKey);
+          const publicKey = await crypto.subtle.exportKey('raw', keyPair.publicKey);
           const message = {
             type: 'key_exchange',
             publicKey: Array.from(new Uint8Array(publicKey)),
@@ -902,10 +924,7 @@ Password: [share securely via a different channel]
 
         try {
           const peerKeyBytes = new Uint8Array(message.publicKey);
-          if (!this.ecdhKeyPair) {
-            this.ecdhKeyPair = await generateECDHKeyPair();
-          }
-          const sharedSecret = await deriveSharedSecret(this.ecdhKeyPair, peerKeyBytes);
+          const sharedSecret = await CryptoManager.applyPeerECDH(peerKeyBytes);
           await this.applySharedSecret(sharedSecret);
 
           if (!this.sentKeyExchange) {
@@ -927,16 +946,9 @@ Password: [share securely via a different channel]
 
         this.resetMessageCounters();
 
-        const { key, material } = await deriveSharedKey(sharedSecret, this.roomSalt, 'secure-chat-ecdh');
-        this.baseKeyMaterial = material.slice().buffer;
-        this.cryptoKey = key;
-        this.currentEpoch = 0;
+        await CryptoManager.promoteSharedSecret(sharedSecret);
         this.lastRotationMessageCount = 0;
         this.keyExchangeComplete = true;
-
-        const fingerprint = await fingerprintFromMaterial(material);
-        this.connectionFingerprint = fingerprint;
-        this.updateFingerprintDisplay(this.connectionFingerprint);
         this.addSystemMessage('🔐 Secure channel upgraded with Diffie-Hellman key exchange');
       }
 
@@ -963,23 +975,18 @@ Password: [share securely via a different channel]
           return;
         }
 
-        let keyData;
         try {
-          keyData = await deriveKey(password, this.roomSalt);
+          await CryptoManager.loadStaticKeyFromPassword(password);
         } catch (error) {
           console.error('Failed to derive encryption key.', error);
           alert('Unable to derive the encryption key. Please try again with a different password.');
           return;
         }
 
-        this.cryptoKey = keyData.key;
-        this.baseKeyMaterial = keyData.baseKeyMaterial;
-        this.connectionFingerprint = keyData.fingerprint;
         this.keyExchangeComplete = false;
         this.sentKeyExchange = false;
-        this.ecdhKeyPair = null;
+        CryptoManager.clearECDHKeyPair();
         this.resetMessageCounters();
-        this.updateFingerprintDisplay(null);
         this.updateStatus('Creating room...', 'connecting');
 
         // Generate and display the share link
@@ -1033,12 +1040,12 @@ Password: [share securely via a different channel]
         this.roomId = roomId;
         this.isHost = false;
         this.currentShareLink = '';
-        this.roomSalt = saltBytes;
-        this.roomSaltBase64 = this.bytesToBase64(saltBytes);
+        CryptoManager.setRoomSalt(saltBytes);
+        this.roomSalt = CryptoManager.getRoomSalt();
+        this.roomSaltBase64 = this.bytesToBase64(this.roomSalt);
 
-        let keyData;
         try {
-          keyData = await deriveKey(password, this.roomSalt);
+          await CryptoManager.loadStaticKeyFromPassword(password);
         } catch (error) {
           console.error('Failed to derive encryption key for joiner.', error);
           alert('Unable to derive the encryption key. Double-check the password and salt.');
@@ -1046,14 +1053,10 @@ Password: [share securely via a different channel]
         }
 
         this.pendingRoomSalt = null;
-        this.cryptoKey = keyData.key;
-        this.baseKeyMaterial = keyData.baseKeyMaterial;
-        this.connectionFingerprint = keyData.fingerprint;
         this.keyExchangeComplete = false;
         this.sentKeyExchange = false;
-        this.ecdhKeyPair = null;
+        CryptoManager.clearECDHKeyPair();
         this.resetMessageCounters();
-        this.updateFingerprintDisplay(null);
         this.updateStatus('Connecting...', 'connecting');
         this.setWaitingBanner(false, '');
 
@@ -1092,6 +1095,11 @@ Password: [share securely via a different channel]
           return;
         }
 
+        if (!CryptoManager.getCurrentKey()) {
+          this.addSystemMessage('⚠️ Encryption key not ready yet.');
+          return;
+        }
+
         if (text.length > MAX_MESSAGE_SIZE) {
           this.addSystemMessage(`⚠️ Message too long (max ${MAX_MESSAGE_SIZE} characters)`);
           return;
@@ -1106,15 +1114,16 @@ Password: [share securely via a different channel]
         input.value = '';
         const timestamp = Date.now();
 
-        const payload = {
+        const envelope = {
+          kind: 'data',
           n: this.outgoingMessageNumber,
-          text,
-          sentAt: timestamp
+          sentAt: timestamp,
+          data: { text }
         };
 
         let encrypted;
         try {
-          encrypted = await encryptMessage(this.cryptoKey, JSON.stringify(payload));
+          encrypted = await CryptoManager.encrypt(JSON.stringify(envelope));
         } catch (error) {
           console.error('Failed to encrypt message.', error);
           this.addSystemMessage('⚠️ Unable to encrypt message');
@@ -1501,7 +1510,7 @@ Password: [share securely via a different channel]
                 <pre>Key Derivation: PBKDF2 (100,000 iterations, SHA-256)
 Encryption: AES-GCM (256-bit key)
 Message Format: [IV (12 bytes)][Ciphertext (variable)]
-Current Key: ${this.cryptoKey ? 'Loaded ✓' : 'Not set ✗'}</pre>
+Current Key: ${CryptoManager.getCurrentKey() ? 'Loaded ✓' : 'Not set ✗'}</pre>
               </div>
             </div>
           </div>
@@ -1612,15 +1621,14 @@ Current Key: ${this.cryptoKey ? 'Loaded ✓' : 'Not set ✗'}</pre>
         this.roomSalt = null;
         this.roomSaltBase64 = '';
         this.pendingRoomSalt = null;
-        this.connectionFingerprint = '';
+        CryptoManager.setRoomSalt(null);
         this.resetMessageCounters();
         this.stopHeartbeat();
-        this.baseKeyMaterial = null;
         this.keyExchangeComplete = false;
         this.sentKeyExchange = false;
-        this.ecdhKeyPair = null;
-        this.currentEpoch = 0;
-        this.lastRotationMessageCount = 0;
+        this.lastAnnouncedEpoch = -1;
+        this.latestFingerprint = '';
+        CryptoManager.reset();
 
         const shareLinkEl = DOM.shareLink;
         if (shareLinkEl) {
@@ -1642,7 +1650,6 @@ Current Key: ${this.cryptoKey ? 'Loaded ✓' : 'Not set ✗'}</pre>
 
         this.conn = null;
         this.peer = null;
-        this.cryptoKey = null;
         this.roomId = null;
         this.remoteUserId = null;
         this.showEncrypted = false;
