@@ -1173,24 +1173,31 @@
           }
         });
 
-        this.peer.on('open', (peerId) => {
+        this.peer.on('open', async (peerId) => {
           console.log('Connected to signaling server with ID:', peerId);
-          
+
           if (this.isHost) {
-            this.updateStatus('Waiting for peer...', 'connecting');
             this.showChat();
-            this.addSystemMessage('Room created. Waiting for someone to join...');
+            this.updateStatus('Waiting for peer...', 'connecting');
+            this.addSystemMessage(`Room created: ${this.roomId}`);
+            this.addSystemMessage('Waiting for someone to join...');
+
+            try {
+              this.storage?.saveRoom?.(this.roomId);
+            } catch (error) {
+              console.warn('Failed to save room history.', error);
+            }
           } else {
-            this.conn = this.peer.connect(this.roomId);
-            this.setupConnection();
+            const conn = this.peer.connect(this.roomId);
+            this.setupConnection(conn);
           }
         });
 
         if (this.isHost) {
           this.peer.on('connection', (conn) => {
-            console.log('Incoming connection');
-            this.conn = conn;
-            this.setupConnection();
+            console.log('Peer connecting');
+            this.addSystemMessage('Peer is connecting...');
+            this.setupConnection(conn);
           });
         }
 
@@ -1214,20 +1221,43 @@
         });
       }
 
-      setupConnection() {
-        this.conn.on('open', () => {
+      setupConnection(conn) {
+        const activeConn = conn || this.conn;
+        if (!activeConn) {
+          console.warn('No connection available to set up.');
+          return;
+        }
+
+        this.conn = activeConn;
+
+        activeConn.on('open', async () => {
           console.log('Peer connection established');
           this.updateStatus('Connected', 'connected');
-          this.storage.saveRoom(this.roomId);
-          
+          this.addSystemMessage('✅ Secure connection established!');
+
           if (!this.isHost) {
             this.showChat();
           }
-          
-          this.addSystemMessage('✅ Secure connection established');
+
+          try {
+            this.storage?.saveRoom?.(this.roomId);
+          } catch (error) {
+            console.warn('Failed to save room history.', error);
+          }
+
+          if (typeof this.storage?.getMessages === 'function') {
+            try {
+              const messages = await this.storage.getMessages(this.roomId);
+              messages.forEach((msg) => {
+                this.displayMessage(msg.content, msg.type || 'them');
+              });
+            } catch (error) {
+              console.error('Failed to load stored messages:', error);
+            }
+          }
         });
 
-        this.conn.on('data', async (data) => {
+        activeConn.on('data', async (data) => {
           const decrypted = await this.decrypt(new Uint8Array(data));
           if (decrypted) {
             this.displayMessage(decrypted, 'them');
@@ -1236,12 +1266,12 @@
           }
         });
 
-        this.conn.on('close', () => {
+        activeConn.on('close', () => {
           this.updateStatus('Disconnected', '');
           this.addSystemMessage('👋 Peer disconnected');
         });
 
-        this.conn.on('error', (err) => {
+        activeConn.on('error', (err) => {
           console.error('Connection error:', err);
           this.addSystemMessage('⚠️ Connection error occurred');
         });
