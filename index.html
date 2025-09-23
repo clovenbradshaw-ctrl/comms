@@ -544,6 +544,22 @@
       color: var(--text-secondary);
     }
 
+    .storage-warning {
+      margin-top: 1.5rem;
+      padding: 0.75rem 1rem;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 170, 0, 0.4);
+      background: rgba(255, 170, 0, 0.1);
+      color: var(--warning);
+      font-size: 0.875rem;
+      line-height: 1.5;
+      display: none;
+    }
+
+    .storage-warning.show {
+      display: block;
+    }
+
     /* Offline Banner */
     .offline-banner {
       position: fixed;
@@ -711,7 +727,11 @@
       <div class="welcome-card">
         <h1>Secure P2P Chat</h1>
         <p>End-to-end encrypted messaging with no servers. Your messages stay on your device.</p>
-        
+
+        <div id="storageWarning" class="storage-warning" role="alert" aria-live="polite" aria-hidden="true">
+          ⚠️ Local history is unavailable because your browser blocked secure storage. The app will continue without saving rooms or messages.
+        </div>
+
         <div class="features">
           <div class="feature">
             <div class="feature-icon">🔐</div>
@@ -956,68 +976,127 @@
       constructor() {
         this.dbName = 'SecureChatDB';
         this.db = null;
+        this.available = false;
+      }
+
+      isReady() {
+        return this.available && !!this.db;
       }
 
       async init() {
+        if (!('indexedDB' in window)) {
+          console.warn('IndexedDB is not supported in this environment');
+          this.db = null;
+          this.available = false;
+          return false;
+        }
+
         return new Promise((resolve) => {
+          let settled = false;
+          const finish = (result) => {
+            if (!settled) {
+              settled = true;
+              resolve(result);
+            }
+          };
+
+          let request;
           try {
-            const request = indexedDB.open(this.dbName, 1);
-
-            request.onerror = () => {
-              console.error('IndexedDB error:', request.error);
-              this.db = null;
-              resolve();
-            };
-
-            request.onsuccess = () => {
-              this.db = request.result;
-              console.log('IndexedDB initialized');
-              resolve();
-            };
-
-            request.onupgradeneeded = (e) => {
-              const db = e.target.result;
-
-              if (!db.objectStoreNames.contains('messages')) {
-                db.createObjectStore('messages', {
-                  keyPath: 'id',
-                  autoIncrement: true
-                }).createIndex('roomId', 'roomId');
-              }
-
-              if (!db.objectStoreNames.contains('rooms')) {
-                db.createObjectStore('rooms', { keyPath: 'roomId' });
-              }
-            };
+            request = indexedDB.open(this.dbName, 1);
           } catch (error) {
             console.error('Failed to open IndexedDB:', error);
             this.db = null;
-            resolve();
+            this.available = false;
+            finish(false);
+            return;
           }
+
+          request.onerror = (event) => {
+            console.error('IndexedDB error:', event.target.error);
+            this.db = null;
+            this.available = false;
+            finish(false);
+          };
+
+          request.onblocked = () => {
+            console.warn('IndexedDB request was blocked');
+            this.db = null;
+            this.available = false;
+            finish(false);
+          };
+
+          request.onsuccess = () => {
+            const dbInstance = request.result;
+            this.db = dbInstance;
+            this.available = true;
+
+            dbInstance.onclose = () => {
+              this.available = false;
+              if (this.db === dbInstance) {
+                this.db = null;
+              }
+            };
+
+            dbInstance.onversionchange = () => {
+              console.warn('IndexedDB version change detected, closing database');
+              this.available = false;
+              dbInstance.close();
+              if (this.db === dbInstance) {
+                this.db = null;
+              }
+            };
+
+            console.log('IndexedDB initialized');
+            finish(true);
+          };
+
+          request.onupgradeneeded = (e) => {
+            const db = e.target.result;
+
+            if (!db.objectStoreNames.contains('messages')) {
+              db.createObjectStore('messages', {
+                keyPath: 'id',
+                autoIncrement: true
+              }).createIndex('roomId', 'roomId');
+            }
+
+            if (!db.objectStoreNames.contains('rooms')) {
+              db.createObjectStore('rooms', { keyPath: 'roomId' });
+            }
+          };
         });
       }
 
       async saveMessage(roomId, content, type) {
-        if (!this.db) {
-          console.warn('Database not available');
-          return;
+        if (!this.isReady()) {
+          console.warn('Storage not available for saving messages');
+          return false;
         }
 
         try {
-          const tx = this.db.transaction(['messages'], 'readwrite');
-          return tx.objectStore('messages').add({
-            roomId,
-            content,
-            type,
-            timestamp: Date.now()
+          return new Promise((resolve) => {
+            const tx = this.db.transaction(['messages'], 'readwrite');
+            const request = tx.objectStore('messages').add({
+              roomId,
+              content,
+              type,
+              timestamp: Date.now()
+            });
+
+            request.onsuccess = () => resolve(true);
+            request.onerror = (event) => {
+              console.error('Failed to save message:', event.target.error);
+              resolve(false);
+            };
           });
         } catch (error) {
           console.error('Failed to save message:', error);
+          return false;
         }
       }
 
       async getMessages(roomId) {
-        if (!this.db) return [];
+        if (!this.isReady()) return [];
 
         try {
           const tx = this.db.transaction(['messages'], 'readonly');
@@ -1048,21 +1127,30 @@
       }
 
       async saveRoom(roomId) {
-        if (!this.db) return;
+        if (!this.isReady()) return false;
 
         try {
-          const tx = this.db.transaction(['rooms'], 'readwrite');
-          return tx.objectStore('rooms').put({
-            roomId,
-            lastUsed: Date.now()
+          return new Promise((resolve) => {
+            const tx = this.db.transaction(['rooms'], 'readwrite');
+            const request = tx.objectStore('rooms').put({
+              roomId,
+              lastUsed: Date.now()
+            });
+
+            request.onsuccess = () => resolve(true);
+            request.onerror = (event) => {
+              console.error('Failed to save room:', event.target.error);
+              resolve(false);
+            };
           });
         } catch (error) {
           console.error('Failed to save room:', error);
+          return false;
         }
       }
 
       async getRooms() {
-        if (!this.db) return [];
+        if (!this.isReady()) return [];
 
         try {
           const tx = this.db.transaction(['rooms'], 'readonly');
@@ -1078,6 +1166,26 @@
         } catch (error) {
           console.error('Failed to get rooms:', error);
           return [];
+        }
+      }
+
+      async deleteRoom(roomId) {
+        if (!this.isReady()) return false;
+
+        try {
+          return new Promise((resolve) => {
+            const tx = this.db.transaction(['rooms'], 'readwrite');
+            const request = tx.objectStore('rooms').delete(roomId);
+
+            request.onsuccess = () => resolve(true);
+            request.onerror = (event) => {
+              console.error('Failed to delete room:', event.target.error);
+              resolve(false);
+            };
+          });
+        } catch (error) {
+          console.error('Failed to delete room:', error);
+          return false;
         }
       }
     }
@@ -1151,22 +1259,32 @@
       }
 
       async initialize() {
-        try {
-          await this.storage.init();
-          console.log('Storage initialized');
+        this.initEventListeners();
+        this.monitorConnection();
 
-          this.initEventListeners();
+        let storageReady = false;
+        try {
+          storageReady = await this.storage.init();
+        } catch (error) {
+          console.error('Storage initialization failed:', error);
+        }
+
+        if (storageReady) {
+          console.log('Storage initialized');
+          this.updateStorageWarning(false);
           await this.loadRoomHistory();
-          this.monitorConnection();
 
           if (navigator.storage && navigator.storage.persist) {
-            const granted = await navigator.storage.persist();
-            console.log('Persistent storage:', granted ? 'granted' : 'denied');
+            try {
+              const granted = await navigator.storage.persist();
+              console.log('Persistent storage:', granted ? 'granted' : 'denied');
+            } catch (error) {
+              console.error('Persistent storage request failed:', error);
+            }
           }
-        } catch (error) {
-          console.error('Initialization failed:', error);
-          this.initEventListeners();
-          this.monitorConnection();
+        } else {
+          console.warn('Continuing without persistent storage');
+          this.updateStorageWarning(true);
         }
       }
 
@@ -1186,24 +1304,48 @@
         window.addEventListener('online', () => {
           document.getElementById('offlineBanner').classList.remove('show');
         });
-        
+
         window.addEventListener('offline', () => {
           document.getElementById('offlineBanner').classList.add('show');
         });
       }
 
+      updateStorageWarning(show) {
+        const warningEl = document.getElementById('storageWarning');
+        if (!warningEl) return;
+
+        if (show) {
+          warningEl.classList.add('show');
+          warningEl.setAttribute('aria-hidden', 'false');
+        } else {
+          warningEl.classList.remove('show');
+          warningEl.setAttribute('aria-hidden', 'true');
+        }
+      }
+
+      isStorageReady() {
+        return this.storage?.isReady?.() ?? false;
+      }
+
       async loadRoomHistory() {
+        const historyEl = document.getElementById('roomHistory');
+        const itemsEl = document.getElementById('historyItems');
+
+        if (!historyEl || !itemsEl) return;
+
+        if (!this.isStorageReady()) {
+          historyEl.style.display = 'none';
+          itemsEl.innerHTML = '';
+          return;
+        }
+
         try {
-          if (!this.storage.db) {
-            console.warn('Storage not ready for room history');
+          const rooms = await this.storage.getRooms();
+          if (!rooms || rooms.length === 0) {
+            historyEl.style.display = 'none';
+            itemsEl.innerHTML = '';
             return;
           }
-
-          const rooms = await this.storage.getRooms();
-          if (rooms.length === 0) return;
-
-          const historyEl = document.getElementById('roomHistory');
-          const itemsEl = document.getElementById('historyItems');
 
           historyEl.style.display = 'block';
           itemsEl.innerHTML = '';
@@ -1258,9 +1400,6 @@
         }
 
         this.key = await deriveKey(password);
-        if (this.storage && this.storage.db) {
-          await this.storage.saveRoom(this.roomId);
-        }
 
         this.updateStatus('Connecting...', 'connecting');
 
@@ -1281,10 +1420,19 @@
           }
         });
 
-        this.peer.on('open', (id) => {
+        this.peer.on('open', async (id) => {
           console.log('Room created successfully:', id);
           this.addSystemMessage(`Room created: ${id}`);
           this.updateStatus('Waiting for peer...', 'connecting');
+
+          if (this.isStorageReady()) {
+            try {
+              await this.storage.saveRoom(id);
+              await this.loadRoomHistory();
+            } catch (error) {
+              console.error('Failed to persist hosted room:', error);
+            }
+          }
         });
 
         this.peer.on('connection', (conn) => {
@@ -1293,7 +1441,7 @@
           this.setupConnection(conn);
         });
 
-        this.peer.on('error', (err) => {
+        this.peer.on('error', async (err) => {
           console.error('Peer error:', err);
 
           if (err.type === 'unavailable-id') {
@@ -1305,13 +1453,14 @@
                 this.peer = null;
               }
 
+              if (this.isStorageReady()) {
+                await this.storage.deleteRoom(this.roomId);
+                await this.loadRoomHistory();
+              }
+
               this.roomId = this.generateRoomId();
               document.getElementById('roomCode').textContent = this.roomId;
               this.addSystemMessage(`Room ID was taken, trying: ${this.roomId}`);
-
-              if (this.storage && this.storage.db) {
-                this.storage.saveRoom(this.roomId);
-              }
 
               setTimeout(() => {
                 this.createPeerConnection(retryCount + 1);
@@ -1335,7 +1484,14 @@
         }
 
         this.key = await deriveKey(password);
-        await this.storage.saveRoom(this.roomId);
+        if (this.isStorageReady()) {
+          try {
+            await this.storage.saveRoom(this.roomId);
+            await this.loadRoomHistory();
+          } catch (error) {
+            console.error('Failed to persist joined room:', error);
+          }
+        }
         
         this.updateStatus('Connecting...', 'connecting');
         
@@ -1368,18 +1524,26 @@
           this.updateStatus('Connected', 'connected');
           this.addSystemMessage('✅ Secure connection established!');
           this.showChat();
-          
-          const messages = await this.storage.getMessages(this.roomId);
-          messages.forEach(msg => {
-            this.displayMessage(msg.content, msg.type, false);
-          });
+
+          if (this.isStorageReady()) {
+            try {
+              const messages = await this.storage.getMessages(this.roomId);
+              messages.forEach(msg => {
+                this.displayMessage(msg.content, msg.type, false);
+              });
+            } catch (error) {
+              console.error('Failed to load stored messages:', error);
+            }
+          }
         });
 
         conn.on('data', async (data) => {
           try {
             const decrypted = await decrypt(new Uint8Array(data), this.key);
             this.displayMessage(decrypted, 'them');
-            await this.storage.saveMessage(this.roomId, decrypted, 'them');
+            if (this.isStorageReady()) {
+              await this.storage.saveMessage(this.roomId, decrypted, 'them');
+            }
           } catch (err) {
             this.addSystemMessage('Failed to decrypt message');
           }
@@ -1412,9 +1576,11 @@
         
         input.value = '';
         this.displayMessage(text, 'me');
-        
-        await this.storage.saveMessage(this.roomId, text, 'me');
-        
+
+        if (this.isStorageReady()) {
+          await this.storage.saveMessage(this.roomId, text, 'me');
+        }
+
         try {
           const encrypted = await encrypt(text, this.key);
           this.connection.send(encrypted);
@@ -1480,8 +1646,10 @@
         document.getElementById('chatInterface').style.display = 'none';
         document.getElementById('welcomeScreen').style.display = 'flex';
         document.getElementById('chatMessages').innerHTML = '';
-        
-        this.loadRoomHistory();
+
+        if (this.isStorageReady()) {
+          this.loadRoomHistory();
+        }
       }
     }
 
