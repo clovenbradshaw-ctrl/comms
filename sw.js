@@ -1,8 +1,10 @@
-const CACHE_NAME = 'secure-chat-v2';
+const CACHE_NAME = 'secure-chat-v4';
 const urlsToCache = [
   './',
   './index.html',
   './manifest.json',
+  'https://storage.googleapis.com/intelechia-content/download%20small.png',
+  'https://storage.googleapis.com/intelechia-content/download%20large.png',
   'https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js'
 ];
 
