@@ -1306,6 +1306,7 @@
   <script>
     const EVENT_SEMVER = '1.0.0';
     const SNAPSHOT_THRESHOLD = 200;
+    const MAX_MESSAGE_SIZE = 10000;
 
     function generateId(prefix = '') {
       const core = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
@@ -1541,6 +1542,8 @@
         this.eventsBuffer = [];
         this.snapshotFrequency = SNAPSHOT_THRESHOLD;
         this.appliedSinceSnapshot = 0;
+        this.storageKey = null;
+        this.storageSalt = null;
         this.ready = this.init();
       }
 
@@ -1552,11 +1555,25 @@
 
         try {
           this.db = await this.openDB();
+          await this.prepareStorageSecurity();
           await this.rehydrate();
         } catch (error) {
           console.warn('IndexedDB unavailable, falling back to in-memory storage.', error);
           this.useMemory = true;
           this.db = null;
+        }
+      }
+
+      async prepareStorageSecurity() {
+        if (!(window?.crypto?.subtle)) {
+          return;
+        }
+
+        try {
+          this.storageKey = await this.deriveStorageKey();
+        } catch (error) {
+          console.warn('Storage encryption unavailable, continuing without it.', error);
+          this.storageKey = null;
         }
       }
 
@@ -1590,6 +1607,223 @@
         });
       }
 
+      async deriveStorageKey() {
+        const passphrase = await this.promptForStoragePassphrase();
+        if (!passphrase) {
+          return null;
+        }
+
+        const encoder = new TextEncoder();
+        const keyMaterial = await crypto.subtle.importKey(
+          'raw',
+          encoder.encode(passphrase),
+          'PBKDF2',
+          false,
+          ['deriveBits']
+        );
+
+        const salt = await this.getOrCreateStorageSalt();
+        const keyBits = await crypto.subtle.deriveBits(
+          {
+            name: 'PBKDF2',
+            salt,
+            iterations: 100000,
+            hash: 'SHA-256'
+          },
+          keyMaterial,
+          256
+        );
+
+        return crypto.subtle.importKey(
+          'raw',
+          keyBits,
+          { name: 'AES-GCM' },
+          false,
+          ['encrypt', 'decrypt']
+        );
+      }
+
+      async promptForStoragePassphrase() {
+        if (typeof window === 'undefined') {
+          return null;
+        }
+
+        try {
+          const cached = sessionStorage.getItem('secure-chat-storage-passphrase');
+          if (cached && cached.trim()) {
+            return cached.trim();
+          }
+        } catch (error) {
+          // Session storage might be unavailable; ignore and fall through to prompt
+        }
+
+        const input = window.prompt(
+          'Enter a passphrase to encrypt stored chat history (leave blank to disable encryption).',
+          ''
+        );
+
+        if (typeof input !== 'string') {
+          return null;
+        }
+
+        const trimmed = input.trim();
+        if (!trimmed) {
+          return null;
+        }
+
+        try {
+          sessionStorage.setItem('secure-chat-storage-passphrase', trimmed);
+        } catch (error) {
+          // Ignore storage failures and continue without caching the passphrase
+        }
+
+        return trimmed;
+      }
+
+      async getOrCreateStorageSalt() {
+        if (this.storageSalt instanceof Uint8Array && this.storageSalt.length > 0) {
+          return this.storageSalt;
+        }
+
+        const storageKey = 'secure-chat-storage-salt';
+        let saltBytes = null;
+
+        try {
+          const existing = localStorage.getItem(storageKey);
+          if (existing) {
+            saltBytes = this.base64ToBytes(existing);
+          }
+        } catch (error) {
+          // Ignore storage access issues
+        }
+
+        if (!(saltBytes instanceof Uint8Array) || saltBytes.length !== 16) {
+          saltBytes = crypto.getRandomValues(new Uint8Array(16));
+          try {
+            localStorage.setItem(storageKey, this.bytesToBase64(saltBytes));
+          } catch (error) {
+            // Persisting the salt is best-effort; ignore failures
+          }
+        }
+
+        this.storageSalt = saltBytes;
+        return saltBytes;
+      }
+
+      async encryptForStorage(data) {
+        if (!this.storageKey) {
+          return data;
+        }
+
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const encoded = new TextEncoder().encode(JSON.stringify(data));
+        const encrypted = await crypto.subtle.encrypt(
+          { name: 'AES-GCM', iv, tagLength: 128 },
+          this.storageKey,
+          encoded
+        );
+
+        return {
+          encrypted: true,
+          iv: Array.from(iv),
+          data: Array.from(new Uint8Array(encrypted))
+        };
+      }
+
+      async decryptFromStorage(encryptedData) {
+        if (!encryptedData?.encrypted) {
+          return encryptedData;
+        }
+
+        if (!this.storageKey) {
+          throw new Error('Storage key required for decryption');
+        }
+
+        const iv = new Uint8Array(encryptedData.iv || []);
+        const payload = new Uint8Array(encryptedData.data || []);
+        const decrypted = await crypto.subtle.decrypt(
+          { name: 'AES-GCM', iv, tagLength: 128 },
+          this.storageKey,
+          payload
+        );
+
+        return JSON.parse(new TextDecoder().decode(decrypted));
+      }
+
+      bytesToBase64(bytes) {
+        if (!(bytes instanceof Uint8Array)) {
+          return '';
+        }
+        let binary = '';
+        bytes.forEach((b) => {
+          binary += String.fromCharCode(b);
+        });
+        return btoa(binary);
+      }
+
+      base64ToBytes(input) {
+        if (typeof input !== 'string' || !input) {
+          return null;
+        }
+        try {
+          const binary = atob(input);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i += 1) {
+            bytes[i] = binary.charCodeAt(i);
+          }
+          return bytes;
+        } catch (error) {
+          return null;
+        }
+      }
+
+      async wrapEventForStorage(event) {
+        if (!this.storageKey) {
+          return event;
+        }
+
+        const metadata = {
+          id: event.id,
+          at: event.at,
+          actor: event.actor,
+          op: event.op,
+          refs: event.refs,
+          semver: event.semver
+        };
+
+        const encryptedPayload = await this.encryptForStorage({
+          payload: event.payload
+        });
+
+        return { ...metadata, encryptedPayload };
+      }
+
+      async unwrapEventFromStorage(record) {
+        if (!record) {
+          return null;
+        }
+
+        if (!record.encryptedPayload) {
+          return record;
+        }
+
+        try {
+          const decrypted = await this.decryptFromStorage(record.encryptedPayload);
+          return {
+            id: record.id,
+            at: record.at,
+            actor: record.actor,
+            op: record.op,
+            refs: record.refs,
+            semver: record.semver,
+            payload: decrypted?.payload
+          };
+        } catch (error) {
+          console.warn('Failed to decrypt stored event.', error);
+          return null;
+        }
+      }
+
       async rehydrate() {
         if (this.useMemory || !this.db) {
           return;
@@ -1613,7 +1847,15 @@
         }
 
         if (snapshot?.state) {
-          this.state = reviveState(snapshot.state);
+          try {
+            const stateData = snapshot.state?.encrypted
+              ? await this.decryptFromStorage(snapshot.state)
+              : snapshot.state;
+            this.state = reviveState(stateData);
+          } catch (error) {
+            console.warn('Failed to decrypt snapshot state.', error);
+            this.state = new ChatState();
+          }
         } else {
           this.state = new ChatState();
         }
@@ -1627,6 +1869,7 @@
           events = [];
         }
 
+        events = (events || []).filter(Boolean);
         events.sort((a, b) => (a.at || 0) - (b.at || 0));
         for (const event of events) {
           await this.apply(event, { persist: false });
@@ -1649,7 +1892,16 @@
           const index = tx.objectStore('events').index('at');
           const range = at ? IDBKeyRange.lowerBound(at, true) : null;
           const request = index.getAll(range);
-          request.onsuccess = () => resolve(request.result || []);
+          request.onsuccess = async () => {
+            try {
+              const raw = request.result || [];
+              const events = await Promise.all(raw.map((record) => this.unwrapEventFromStorage(record)));
+              resolve(events.filter(Boolean));
+            } catch (error) {
+              console.warn('Failed to load encrypted events.', error);
+              resolve([]);
+            }
+          };
           request.onerror = () => resolve([]);
         });
       }
@@ -1660,11 +1912,12 @@
         }
 
         if (persist && !this.useMemory && this.db) {
+          const record = await this.wrapEventForStorage(event);
           await new Promise((resolve, reject) => {
             const tx = this.db.transaction('events', 'readwrite');
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);
-            tx.objectStore('events').put(event);
+            tx.objectStore('events').put(record);
           });
         } else if (persist && this.useMemory) {
           this.eventsBuffer.push(event);
@@ -1685,10 +1938,11 @@
           return;
         }
 
+        const rawState = serializeState(this.state);
         const snapshot = {
           id: generateId('snap-'),
           at: Date.now(),
-          state: serializeState(this.state)
+          state: this.storageKey ? await this.encryptForStorage(rawState) : rawState
         };
 
         await new Promise((resolve, reject) => {
@@ -1804,6 +2058,19 @@
         this.outgoingMessageNumber = 1;
         this.expectedIncomingMessageNumber = 1;
         this.connectionFingerprint = '';
+        this.baseKeyMaterial = null;
+        this.keyRotationInterval = 10;
+        this.currentEpoch = 0;
+        this.lastRotationMessageCount = 0;
+        this.messageRateLimit = {
+          timestamps: [],
+          maxPerMinute: 30,
+          maxBurst: 5
+        };
+        this.heartbeat = null;
+        this.ecdhKeyPair = null;
+        this.keyExchangeComplete = false;
+        this.sentKeyExchange = false;
 
         this.initStorage();
         this.loadRoomHistory();
@@ -2237,6 +2504,11 @@ Password: [share securely via a different channel]
       resetMessageCounters() {
         this.outgoingMessageNumber = 1;
         this.expectedIncomingMessageNumber = 1;
+        this.lastRotationMessageCount = 0;
+        this.currentEpoch = 0;
+        if (this.messageRateLimit) {
+          this.messageRateLimit.timestamps = [];
+        }
       }
 
       bytesToBase64(bytes) {
@@ -2361,6 +2633,7 @@ Password: [share securely via a different channel]
         const bytes = new Uint8Array(derivedBits);
         const keyBytes = bytes.slice(0, 32);
         const fingerprintBytes = bytes.slice(32, 48);
+        const baseKeyMaterial = keyBytes.slice().buffer;
 
         const cryptoKey = await crypto.subtle.importKey(
           'raw',
@@ -2372,7 +2645,8 @@ Password: [share securely via a different channel]
 
         return {
           key: cryptoKey,
-          fingerprint: this.formatFingerprint(fingerprintBytes)
+          fingerprint: this.formatFingerprint(fingerprintBytes),
+          baseKeyMaterial
         };
       }
 
@@ -2380,7 +2654,7 @@ Password: [share securely via a different channel]
         const iv = crypto.getRandomValues(new Uint8Array(12));
         const encoded = new TextEncoder().encode(text);
         const encrypted = await crypto.subtle.encrypt(
-          { name: 'AES-GCM', iv },
+          { name: 'AES-GCM', iv, tagLength: 128 },
           this.cryptoKey,
           encoded
         );
@@ -2394,18 +2668,388 @@ Password: [share securely via a different channel]
       async decrypt(data) {
         const iv = data.slice(0, 12);
         const encrypted = data.slice(12);
-        
+
         try {
           const decrypted = await crypto.subtle.decrypt(
-            { name: 'AES-GCM', iv },
+            { name: 'AES-GCM', iv, tagLength: 128 },
             this.cryptoKey,
             encrypted
           );
           return new TextDecoder().decode(decrypted);
         } catch(e) {
-          console.error('Decryption failed');
+          console.error('Message authentication failed:', e);
           return null;
         }
+      }
+
+      async deriveRatchetKey(baseKey, epoch) {
+        if (!baseKey && baseKey !== 0) {
+          throw new Error('Missing base key material for ratchet');
+        }
+
+        const material = baseKey instanceof ArrayBuffer
+          ? baseKey
+          : baseKey?.buffer?.slice(baseKey.byteOffset, baseKey.byteOffset + baseKey.byteLength);
+
+        if (!(material instanceof ArrayBuffer)) {
+          throw new Error('Invalid base key material');
+        }
+
+        const hkdfKey = await crypto.subtle.importKey(
+          'raw',
+          material,
+          'HKDF',
+          false,
+          ['deriveBits']
+        );
+
+        const salt = this.roomSalt instanceof Uint8Array ? this.roomSalt : new Uint8Array(16);
+        const encoder = new TextEncoder();
+        const derivedBits = await crypto.subtle.deriveBits(
+          {
+            name: 'HKDF',
+            hash: 'SHA-256',
+            salt,
+            info: encoder.encode(`epoch-${epoch}`)
+          },
+          hkdfKey,
+          256
+        );
+
+        return crypto.subtle.importKey(
+          'raw',
+          derivedBits,
+          { name: 'AES-GCM' },
+          false,
+          ['encrypt', 'decrypt']
+        );
+      }
+
+      async sendSecureControlMessage(message) {
+        if (!this.conn || !this.cryptoKey) {
+          return false;
+        }
+
+        try {
+          const encrypted = await this.encrypt(JSON.stringify(message));
+          this.conn.send(encrypted);
+          return true;
+        } catch (error) {
+          console.error('Failed to send secure control message.', error);
+          return false;
+        }
+      }
+
+      async rotateKeysIfNeeded() {
+        if (!this.conn || !this.baseKeyMaterial) {
+          return;
+        }
+
+        const messagesSent = this.outgoingMessageNumber - 1;
+        if (messagesSent <= 0 || this.keyRotationInterval <= 0) {
+          return;
+        }
+
+        if (messagesSent % this.keyRotationInterval !== 0) {
+          return;
+        }
+
+        if (this.lastRotationMessageCount === messagesSent) {
+          return;
+        }
+
+        const nextEpoch = this.currentEpoch + 1;
+        let nextKey = null;
+
+        try {
+          nextKey = await this.deriveRatchetKey(this.baseKeyMaterial, nextEpoch);
+        } catch (error) {
+          console.error('Failed to derive ratcheted key.', error);
+          this.addSystemMessage('⚠️ Key rotation failed');
+          return;
+        }
+
+        const sent = await this.sendSecureControlMessage({
+          type: 'key_rotation',
+          epoch: nextEpoch,
+          timestamp: Date.now()
+        });
+
+        if (!sent) {
+          return;
+        }
+
+        this.cryptoKey = nextKey;
+        this.currentEpoch = nextEpoch;
+        this.lastRotationMessageCount = messagesSent;
+        this.addSystemMessage('🔄 Security keys rotated');
+      }
+
+      initHeartbeat() {
+        if (this.heartbeat?.timer) {
+          clearInterval(this.heartbeat.timer);
+        }
+
+        this.heartbeat = {
+          interval: 30000,
+          timeout: 60000,
+          lastReceived: Date.now(),
+          timer: null
+        };
+
+        this.heartbeat.timer = setInterval(async () => {
+          if (!this.conn) {
+            return;
+          }
+
+          if (Date.now() - this.heartbeat.lastReceived > this.heartbeat.timeout) {
+            this.addSystemMessage('⚠️ Connection timeout - peer unresponsive');
+            this.handleDisconnect();
+            return;
+          }
+
+          await this.sendSecureControlMessage({
+            type: 'heartbeat',
+            timestamp: Date.now()
+          });
+        }, this.heartbeat.interval);
+      }
+
+      stopHeartbeat() {
+        if (this.heartbeat?.timer) {
+          clearInterval(this.heartbeat.timer);
+          this.heartbeat.timer = null;
+        }
+        this.heartbeat = null;
+      }
+
+      async handleHeartbeat(message) {
+        if (!message || (message.type !== 'heartbeat' && message.type !== 'heartbeat_ack')) {
+          return false;
+        }
+
+        if (!this.heartbeat) {
+          this.initHeartbeat();
+        }
+
+        this.heartbeat.lastReceived = Date.now();
+
+        if (message.type === 'heartbeat') {
+          await this.sendSecureControlMessage({
+            type: 'heartbeat_ack',
+            timestamp: Date.now()
+          });
+        }
+
+        return true;
+      }
+
+      async handleIncomingKeyRotation(message) {
+        const epoch = Number(message?.epoch);
+        if (!Number.isInteger(epoch) || epoch <= this.currentEpoch) {
+          return;
+        }
+
+        if (!this.baseKeyMaterial) {
+          this.addSystemMessage('⚠️ Received key rotation signal but missing base key');
+          return;
+        }
+
+        try {
+          const nextKey = await this.deriveRatchetKey(this.baseKeyMaterial, epoch);
+          this.cryptoKey = nextKey;
+          this.currentEpoch = epoch;
+          this.addSystemMessage('🔄 Security keys rotated');
+        } catch (error) {
+          console.error('Failed to process incoming key rotation.', error);
+          this.addSystemMessage('⚠️ Failed to process key rotation signal');
+        }
+      }
+
+      async handleControlMessage(message) {
+        if (!message || typeof message.type !== 'string') {
+          return false;
+        }
+
+        if (message.type === 'key_rotation') {
+          await this.handleIncomingKeyRotation(message);
+          return true;
+        }
+
+        if (message.type === 'heartbeat' || message.type === 'heartbeat_ack') {
+          await this.handleHeartbeat(message);
+          return true;
+        }
+
+        if (message.type === 'key_exchange' || message.type === 'key_exchange_ack') {
+          await this.handleKeyExchangeMessage(message);
+          return true;
+        }
+
+        return false;
+      }
+
+      handleDisconnect() {
+        this.stopHeartbeat();
+        if (this.conn) {
+          try {
+            this.conn.close();
+          } catch (error) {
+            console.warn('Failed to close connection cleanly.', error);
+          }
+        }
+      }
+
+      async startKeyExchange() {
+        if (this.sentKeyExchange || !this.conn || !crypto?.subtle) {
+          return;
+        }
+
+        try {
+          if (!this.ecdhKeyPair) {
+            this.ecdhKeyPair = await this.generateKeyPair();
+          }
+
+          const publicKey = await crypto.subtle.exportKey('raw', this.ecdhKeyPair.publicKey);
+          const message = {
+            type: 'key_exchange',
+            publicKey: Array.from(new Uint8Array(publicKey)),
+            timestamp: Date.now()
+          };
+
+          const sent = await this.sendSecureControlMessage(message);
+          if (sent) {
+            this.sentKeyExchange = true;
+          }
+        } catch (error) {
+          console.error('Failed to initiate key exchange.', error);
+        }
+      }
+
+      async generateKeyPair() {
+        return crypto.subtle.generateKey(
+          {
+            name: 'ECDH',
+            namedCurve: 'P-256'
+          },
+          true,
+          ['deriveBits']
+        );
+      }
+
+      async handleKeyExchangeMessage(message) {
+        if (this.keyExchangeComplete) {
+          return;
+        }
+
+        if (!message?.publicKey || !Array.isArray(message.publicKey)) {
+          return;
+        }
+
+        try {
+          const peerKeyBytes = new Uint8Array(message.publicKey);
+          const sharedSecret = await this.deriveSharedSecret(peerKeyBytes);
+          await this.applySharedSecret(sharedSecret);
+
+          if (!this.sentKeyExchange) {
+            await this.startKeyExchange();
+          }
+        } catch (error) {
+          console.error('Failed to process key exchange message.', error);
+        }
+      }
+
+      async deriveSharedSecret(peerPublicKeyBytes) {
+        if (!(peerPublicKeyBytes instanceof Uint8Array) || peerPublicKeyBytes.length === 0) {
+          throw new Error('Invalid peer public key');
+        }
+
+        if (!this.ecdhKeyPair) {
+          this.ecdhKeyPair = await this.generateKeyPair();
+        }
+
+        const peerPublicKey = await crypto.subtle.importKey(
+          'raw',
+          peerPublicKeyBytes,
+          {
+            name: 'ECDH',
+            namedCurve: 'P-256'
+          },
+          true,
+          []
+        );
+
+        const sharedBits = await crypto.subtle.deriveBits(
+          {
+            name: 'ECDH',
+            public: peerPublicKey
+          },
+          this.ecdhKeyPair.privateKey,
+          256
+        );
+
+        return new Uint8Array(sharedBits);
+      }
+
+      async applySharedSecret(sharedSecret) {
+        if (!(sharedSecret instanceof Uint8Array) || sharedSecret.length === 0) {
+          return;
+        }
+
+        if (!(this.roomSalt instanceof Uint8Array)) {
+          this.generateRoomSalt();
+        }
+
+        this.resetMessageCounters();
+
+        const hkdfKey = await crypto.subtle.importKey(
+          'raw',
+          sharedSecret,
+          'HKDF',
+          false,
+          ['deriveBits']
+        );
+
+        const encoder = new TextEncoder();
+        const derivedBits = await crypto.subtle.deriveBits(
+          {
+            name: 'HKDF',
+            hash: 'SHA-256',
+            salt: this.roomSalt,
+            info: encoder.encode('secure-chat-ecdh')
+          },
+          hkdfKey,
+          256
+        );
+
+        const newKey = await crypto.subtle.importKey(
+          'raw',
+          derivedBits,
+          { name: 'AES-GCM' },
+          false,
+          ['encrypt', 'decrypt']
+        );
+
+        const derivedBytes = new Uint8Array(derivedBits);
+        this.baseKeyMaterial = derivedBytes.slice().buffer;
+        this.cryptoKey = newKey;
+        this.currentEpoch = 0;
+        this.lastRotationMessageCount = 0;
+        this.keyExchangeComplete = true;
+
+        await this.updateFingerprintFromMaterial(derivedBytes);
+        this.addSystemMessage('🔐 Secure channel upgraded with Diffie-Hellman key exchange');
+      }
+
+      async updateFingerprintFromMaterial(bytes) {
+        if (!(bytes instanceof Uint8Array) || bytes.length === 0) {
+          return;
+        }
+
+        const digest = await crypto.subtle.digest('SHA-256', bytes);
+        const digestBytes = new Uint8Array(digest).slice(0, 16);
+        this.connectionFingerprint = this.formatFingerprint(digestBytes);
+        this.updateFingerprintDisplay(this.connectionFingerprint);
       }
 
       // Peer Connection
@@ -2440,7 +3084,11 @@ Password: [share securely via a different channel]
         }
 
         this.cryptoKey = keyData.key;
+        this.baseKeyMaterial = keyData.baseKeyMaterial;
         this.connectionFingerprint = keyData.fingerprint;
+        this.keyExchangeComplete = false;
+        this.sentKeyExchange = false;
+        this.ecdhKeyPair = null;
         this.resetMessageCounters();
         this.updateFingerprintDisplay(null);
         this.updateStatus('Creating room...', 'connecting');
@@ -2505,7 +3153,11 @@ Password: [share securely via a different channel]
 
         this.pendingRoomSalt = null;
         this.cryptoKey = keyData.key;
+        this.baseKeyMaterial = keyData.baseKeyMaterial;
         this.connectionFingerprint = keyData.fingerprint;
+        this.keyExchangeComplete = false;
+        this.sentKeyExchange = false;
+        this.ecdhKeyPair = null;
         this.resetMessageCounters();
         this.updateFingerprintDisplay(null);
         this.updateStatus('Connecting...', 'connecting');
@@ -2577,7 +3229,11 @@ Password: [share securely via a different channel]
                   this.generateRoomSalt();
                   const keyData = await this.deriveKey(password, this.roomSalt);
                   this.cryptoKey = keyData.key;
+                  this.baseKeyMaterial = keyData.baseKeyMaterial;
                   this.connectionFingerprint = keyData.fingerprint;
+                  this.keyExchangeComplete = false;
+                  this.sentKeyExchange = false;
+                  this.ecdhKeyPair = null;
                   this.resetMessageCounters();
                   this.updateFingerprintDisplay(null);
                 } catch (error) {
@@ -2623,6 +3279,7 @@ Password: [share securely via a different channel]
         activeConn.on('open', async () => {
           console.log('Peer connection established');
           this.updateStatus('Connected', 'connected');
+          this.initHeartbeat();
           this.addSystemMessage('✅ Secure connection established!');
           if (this.connectionFingerprint) {
             this.updateFingerprintDisplay(this.connectionFingerprint);
@@ -2651,10 +3308,32 @@ Password: [share securely via a different channel]
               console.error('Failed to load stored messages:', error);
             }
           }
+
+          await this.startKeyExchange();
         });
 
         activeConn.on('data', async (data) => {
-          const payload = data instanceof Uint8Array ? data : new Uint8Array(data);
+          if (data && typeof data.byteLength === 'number' && data.byteLength > MAX_MESSAGE_SIZE * 4) {
+            this.addSystemMessage('⚠️ Received oversized message - rejected');
+            return;
+          }
+
+          let payload;
+          if (data instanceof Uint8Array) {
+            payload = data;
+          } else if (ArrayBuffer.isView(data) && data.buffer) {
+            payload = new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
+          } else if (data instanceof ArrayBuffer) {
+            payload = new Uint8Array(data);
+          } else if (typeof data === 'string') {
+            payload = new TextEncoder().encode(data);
+          } else {
+            this.addSystemMessage('⚠️ Unsupported message format received');
+            return;
+          }
+          if (this.heartbeat) {
+            this.heartbeat.lastReceived = Date.now();
+          }
           this.lastEncryptedHex = Array.from(payload)
             .map(b => b.toString(16).padStart(2, '0'))
             .join('');
@@ -2670,6 +3349,10 @@ Password: [share securely via a different channel]
           } catch (error) {
             console.warn('Invalid message payload received.', error);
             this.addSystemMessage('⚠️ Message integrity check failed. Ignoring message.');
+            return;
+          }
+
+          if (await this.handleControlMessage(parsed)) {
             return;
           }
 
@@ -2712,9 +3395,14 @@ Password: [share securely via a different channel]
         });
 
         activeConn.on('close', () => {
+          this.conn = null;
           this.remoteUserId = null;
           this.updateFingerprintDisplay(null);
           this.resetMessageCounters();
+          this.stopHeartbeat();
+          this.keyExchangeComplete = false;
+          this.sentKeyExchange = false;
+          this.ecdhKeyPair = null;
           if (this.isHost && this.currentShareLink) {
             this.updateStatus('Waiting for peer...', 'connecting');
             this.addSystemMessage('👋 Peer disconnected');
@@ -2728,16 +3416,47 @@ Password: [share securely via a different channel]
         activeConn.on('error', (err) => {
           console.error('Connection error:', err);
           this.updateFingerprintDisplay(null);
+          this.stopHeartbeat();
           this.addSystemMessage('⚠️ Connection error occurred');
         });
       }
 
       // Messaging
+      canSendMessage() {
+        const now = Date.now();
+        const limits = this.messageRateLimit;
+        const oneMinuteAgo = now - 60000;
+        limits.timestamps = limits.timestamps.filter((t) => t > oneMinuteAgo);
+
+        if (limits.timestamps.length >= limits.maxPerMinute) {
+          return { allowed: false, reason: 'Rate limit: Maximum 30 messages per minute' };
+        }
+
+        const twoSecondsAgo = now - 2000;
+        const recent = limits.timestamps.filter((t) => t > twoSecondsAgo);
+        if (recent.length >= limits.maxBurst) {
+          return { allowed: false, reason: 'Slow down! Too many messages at once' };
+        }
+
+        return { allowed: true };
+      }
+
       async sendMessage() {
         const input = document.getElementById('messageInput');
         const text = input.value.trim();
 
         if (!text || !this.conn) {
+          return;
+        }
+
+        if (text.length > MAX_MESSAGE_SIZE) {
+          this.addSystemMessage(`⚠️ Message too long (max ${MAX_MESSAGE_SIZE} characters)`);
+          return;
+        }
+
+        const rateCheck = this.canSendMessage();
+        if (!rateCheck.allowed) {
+          this.addSystemMessage(`⚠️ ${rateCheck.reason}`);
           return;
         }
 
@@ -2763,6 +3482,8 @@ Password: [share securely via a different channel]
           .map(b => b.toString(16).padStart(2, '0'))
           .join('');
 
+        this.messageRateLimit.timestamps.push(Date.now());
+
         this.outgoingMessageNumber += 1;
         this.displayMessage(text, 'me', timestamp, encrypted);
 
@@ -2779,6 +3500,8 @@ Password: [share securely via a different channel]
         if (this.conn) {
           this.conn.send(encrypted);
         }
+
+        await this.rotateKeysIfNeeded();
       }
 
       toggleEncryptedView() {
@@ -3218,6 +3941,13 @@ Current Key: ${this.cryptoKey ? 'Loaded ✓' : 'Not set ✗'}</pre>
         this.pendingRoomSalt = null;
         this.connectionFingerprint = '';
         this.resetMessageCounters();
+        this.stopHeartbeat();
+        this.baseKeyMaterial = null;
+        this.keyExchangeComplete = false;
+        this.sentKeyExchange = false;
+        this.ecdhKeyPair = null;
+        this.currentEpoch = 0;
+        this.lastRotationMessageCount = 0;
 
         const shareLinkEl = document.getElementById('shareLink');
         if (shareLinkEl) {
