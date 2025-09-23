@@ -12,14 +12,6 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="Secure Chat">
   
-  <!-- Manifest -->
-  <link rel="manifest" href="manifest.json">
-  
-  <!-- Icons -->
-  <link rel="apple-touch-icon" href="https://storage.googleapis.com/intelechia-content/download%20small.png">
-  <link rel="icon" type="image/png" sizes="192x192" href="https://storage.googleapis.com/intelechia-content/download%20small.png">
-  <link rel="icon" type="image/png" sizes="512x512" href="https://storage.googleapis.com/intelechia-content/download%20large.png">
-  
   <title>Secure P2P Chat</title>
   
   <style>
@@ -78,7 +70,6 @@
       50% { opacity: 1; transform: scale(1.1) rotate(10deg); }
     }
 
-    /* Main Container */
     .app {
       width: 100%;
       height: 100vh;
@@ -155,6 +146,18 @@
       50% { opacity: 0.5; transform: scale(1.2); }
     }
 
+    /* Screens */
+    .screen {
+      display: none;
+      flex: 1;
+      position: relative;
+    }
+
+    .screen.active {
+      display: flex;
+      flex-direction: column;
+    }
+
     /* Welcome Screen */
     .welcome {
       flex: 1;
@@ -176,6 +179,18 @@
       max-width: 500px;
       width: 100%;
       box-shadow: var(--shadow);
+      animation: fadeInUp 0.5s ease;
+    }
+
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
 
     .welcome h1 {
@@ -266,8 +281,26 @@
     }
 
     /* Room Setup */
-    .room-setup {
-      padding: 2rem 0;
+    .setup-screen {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 2rem;
+    }
+
+    .setup-card {
+      background: rgba(26, 26, 26, 0.6);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      padding: 3rem;
+      max-width: 500px;
+      width: 100%;
+      box-shadow: var(--shadow);
+      animation: fadeInUp 0.5s ease;
     }
 
     .room-code-display {
@@ -320,12 +353,34 @@
       box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.1);
     }
 
+    .share-section {
+      margin-top: 2rem;
+      padding: 1.5rem;
+      background: rgba(0, 102, 255, 0.1);
+      border-radius: 12px;
+      border: 1px solid rgba(0, 102, 255, 0.3);
+    }
+
+    .share-link {
+      background: var(--bg-primary);
+      padding: 1rem;
+      border-radius: 8px;
+      word-break: break-all;
+      font-size: 0.75rem;
+      font-family: monospace;
+      cursor: pointer;
+      margin: 0.75rem 0;
+    }
+
+    .share-link:hover {
+      background: var(--bg-secondary);
+    }
+
     /* Chat Interface */
     .chat-container {
-      flex: 1;
+      height: 100%;
       display: flex;
       flex-direction: column;
-      height: 100vh;
       background: var(--bg-primary);
     }
 
@@ -434,6 +489,7 @@
       font-size: 0.875rem;
       color: var(--text-secondary);
       max-width: fit-content;
+      animation: messageIn 0.3s ease;
     }
 
     .chat-input-container {
@@ -545,111 +601,9 @@
       color: var(--text-secondary);
     }
 
-    .storage-warning {
-      margin-top: 1.5rem;
-      padding: 0.75rem 1rem;
-      border-radius: 12px;
-      border: 1px solid rgba(255, 170, 0, 0.4);
-      background: rgba(255, 170, 0, 0.1);
-      color: var(--warning);
-      font-size: 0.875rem;
-      line-height: 1.5;
-      display: none;
-    }
-
-    .storage-warning.show {
-      display: block;
-    }
-
-    /* Offline Banner */
-    .offline-banner {
-      position: fixed;
-      top: 60px;
-      left: 0;
-      right: 0;
-      background: var(--warning);
-      color: var(--bg-primary);
-      padding: 0.75rem;
-      text-align: center;
-      font-size: 0.875rem;
-      font-weight: 600;
-      transform: translateY(-100%);
-      transition: transform 0.3s ease;
-      z-index: 100;
-    }
-
-    .offline-banner.show {
-      transform: translateY(0);
-    }
-
-    /* Install Prompt */
-    .install-prompt {
-      position: fixed;
-      bottom: 2rem;
-      left: 50%;
-      transform: translateX(-50%) translateY(200%);
-      background: rgba(26, 26, 26, 0.95);
-      border: 1px solid var(--border);
-      padding: 1rem 1.5rem;
-      border-radius: 16px;
-      display: flex;
-      align-items: center;
-      gap: 1rem;
-      transition: transform 0.4s ease, opacity 0.4s ease;
-      z-index: 1000;
-      box-shadow: var(--shadow);
-      opacity: 0;
-      pointer-events: none;
-    }
-
-    .install-prompt.show {
-      transform: translateX(-50%) translateY(0);
-      opacity: 1;
-      pointer-events: auto;
-    }
-
-    .install-prompt .install-text {
-      display: flex;
-      flex-direction: column;
-      gap: 0.25rem;
-    }
-
-    .install-instructions {
-      font-size: 0.75rem;
-      color: var(--text-secondary);
-      display: none;
-      max-width: 220px;
-      line-height: 1.4;
-    }
-
-    .install-instructions.show {
-      display: block;
-    }
-
-    .install-btn {
-      padding: 0.5rem 1rem;
-      background: var(--accent);
-      color: white;
-      border: none;
-      border-radius: 100px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.3s ease;
-    }
-
-    .install-btn[disabled] {
-      background: var(--bg-tertiary);
-      color: var(--text-secondary);
-      cursor: not-allowed;
-    }
-
-    .install-btn:not([disabled]):hover {
-      background: var(--accent-hover);
-    }
-
     /* Responsive Design */
     @media (max-width: 768px) {
-      .welcome-card {
+      .welcome-card, .setup-card {
         padding: 2rem 1.5rem;
       }
 
@@ -706,10 +660,6 @@
   </style>
 </head>
 <body>
-  <div class="offline-banner" id="offlineBanner">
-    📡 You're offline - Messages will sync when connection returns
-  </div>
-
   <div class="app">
     <!-- Header -->
     <div class="header">
@@ -724,798 +674,431 @@
     </div>
 
     <!-- Welcome Screen -->
-    <div id="welcomeScreen" class="welcome">
-      <div class="welcome-card">
-        <h1>Secure P2P Chat</h1>
-        <p>End-to-end encrypted messaging with no servers. Your messages stay on your device.</p>
+    <div id="welcomeScreen" class="screen active">
+      <div class="welcome">
+        <div class="welcome-card">
+          <h1>Secure P2P Chat</h1>
+          <p>End-to-end encrypted messaging with no servers. Your messages stay on your device.</p>
 
-        <div id="storageWarning" class="storage-warning" role="alert" aria-live="polite" aria-hidden="true">
-          ⚠️ Local history is unavailable because your browser blocked secure storage. The app will continue without saving rooms or messages.
+          <div class="features">
+            <div class="feature">
+              <div class="feature-icon">🔐</div>
+              <div class="feature-text">E2E Encrypted</div>
+            </div>
+            <div class="feature">
+              <div class="feature-icon">🌐</div>
+              <div class="feature-text">No Servers</div>
+            </div>
+            <div class="feature">
+              <div class="feature-icon">💾</div>
+              <div class="feature-text">Local Storage</div>
+            </div>
+          </div>
+
+          <div class="action-buttons">
+            <button class="btn btn-primary" onclick="app.showHost()">
+              <span>🏠</span>
+              <span>Create Room</span>
+            </button>
+            <button class="btn btn-secondary" onclick="app.showJoin()">
+              <span>🔗</span>
+              <span>Join Room</span>
+            </button>
+          </div>
+
+          <!-- Room History -->
+          <div id="roomHistory" class="room-history" style="display:none;">
+            <div class="history-title">Recent Rooms</div>
+            <div id="historyItems" class="history-items"></div>
+          </div>
         </div>
+      </div>
+    </div>
 
-        <div class="features">
-          <div class="feature">
-            <div class="feature-icon">🔐</div>
-            <div class="feature-text">E2E Encrypted</div>
+    <!-- Host Setup Screen -->
+    <div id="hostScreen" class="screen">
+      <div class="setup-screen">
+        <div class="setup-card">
+          <h2>Create Secure Room</h2>
+          <p style="color: var(--text-secondary); text-align: center; margin-bottom: 1rem;">Share this room code with someone you trust</p>
+          
+          <div class="room-code-display" id="roomCode" onclick="app.copyRoomCode()">
+            Loading...
           </div>
-          <div class="feature">
-            <div class="feature-icon">🌐</div>
-            <div class="feature-text">No Servers</div>
+          
+          <div class="input-group">
+            <label class="input-label">Set Encryption Password</label>
+            <input type="password" id="hostPassword" class="input-field" placeholder="Choose a strong password">
           </div>
-          <div class="feature">
-            <div class="feature-icon">💾</div>
-            <div class="feature-text">Local Storage</div>
-          </div>
-        </div>
-
-        <div class="action-buttons">
-          <button id="hostBtn" class="btn btn-primary">
-            <span>🏠</span>
-            <span>Create Room</span>
+          
+          <button class="btn btn-primary" style="width: 100%;" onclick="app.startHost()">
+            Start Secure Room
           </button>
-          <button id="joinBtn" class="btn btn-secondary">
-            <span>🔗</span>
-            <span>Join Room</span>
-          </button>
-        </div>
-
-        <!-- Room History -->
-        <div id="roomHistory" class="room-history" style="display:none;">
-          <div class="history-title">Recent Rooms</div>
-          <div id="historyItems" class="history-items"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Host Setup -->
-    <div id="hostSetup" class="welcome" style="display:none;">
-      <div class="welcome-card">
-        <h2>Create Secure Room</h2>
-        <p>Share this room code with someone you trust</p>
-        
-        <div class="room-code-display" id="roomCode" onclick="copyRoomCode()">
-          Loading...
-        </div>
-        
-        <div class="input-group">
-          <label class="input-label">Set Encryption Password</label>
-          <input type="password" id="hostPassword" class="input-field" placeholder="Choose a strong password">
-        </div>
-        
-        <button id="hostStart" class="btn btn-primary" style="width: 100%;">
-          Start Secure Room
-        </button>
-        
-        <button onclick="backToWelcome()" class="btn btn-secondary" style="width: 100%; margin-top: 1rem;">
-          Back
-        </button>
-      </div>
-    </div>
-
-    <!-- Join Setup -->
-    <div id="joinSetup" class="welcome" style="display:none;">
-      <div class="welcome-card">
-        <h2>Join Secure Room</h2>
-        <p>Enter the room details shared with you</p>
-        
-        <div class="input-group">
-          <label class="input-label">Room Code</label>
-          <input type="text" id="joinRoomCode" class="input-field" placeholder="xxx-xxx-xxx">
-        </div>
-        
-        <div class="input-group">
-          <label class="input-label">Encryption Password</label>
-          <input type="password" id="joinPassword" class="input-field" placeholder="Enter shared password">
-        </div>
-        
-        <button id="joinStart" class="btn btn-primary" style="width: 100%;">
-          Join Room
-        </button>
-        
-        <button onclick="backToWelcome()" class="btn btn-secondary" style="width: 100%; margin-top: 1rem;">
-          Back
-        </button>
-      </div>
-    </div>
-
-    <!-- Chat Interface -->
-    <div id="chatInterface" class="chat-container" style="display:none;">
-      <div class="chat-header">
-        <div class="chat-room-info">
-          <span>🔐</span>
-          <div class="room-badge" id="currentRoom">xxx-xxx-xxx</div>
-        </div>
-        <button onclick="disconnect()" class="btn btn-secondary" style="padding: 0.5rem 1rem;">
-          Leave
-        </button>
-      </div>
-
-      <div id="chatMessages" class="chat-messages">
-        <!-- Messages will appear here -->
-      </div>
-
-      <div class="chat-input-container">
-        <div class="chat-input-wrapper">
-          <input type="text" id="messageInput" class="chat-input" placeholder="Type a secure message...">
-          <button id="sendBtn" class="send-btn">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13"></line>
-              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-            </svg>
+          
+          <div id="shareSection" class="share-section" style="display: none;">
+            <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 0.75rem;">📤 Share this link with others:</p>
+            <div class="share-link" id="shareLink" onclick="app.copyShareLink()">
+              Generating link...
+            </div>
+            <button class="btn btn-primary" style="width: 100%;" onclick="app.copyShareLink()">📋 Copy Link</button>
+          </div>
+          
+          <button class="btn btn-secondary" style="width: 100%; margin-top: 1rem;" onclick="app.showWelcome()">
+            Back
           </button>
         </div>
       </div>
     </div>
-  </div>
 
-  <!-- Install Prompt -->
-  <div id="installPrompt" class="install-prompt" hidden aria-hidden="true">
-    <div class="install-text">
-      <span>📱 Install for offline access</span>
-      <span id="iosInstructions" class="install-instructions">Open the share menu and tap “Add to Home Screen”.</span>
+    <!-- Join Setup Screen -->
+    <div id="joinScreen" class="screen">
+      <div class="setup-screen">
+        <div class="setup-card">
+          <h2>Join Secure Room</h2>
+          <p style="color: var(--text-secondary); text-align: center; margin-bottom: 1rem;">Enter the room details shared with you</p>
+          
+          <div class="input-group">
+            <label class="input-label">Room Code</label>
+            <input type="text" id="joinCode" class="input-field" placeholder="xxx-xxx-xxx">
+          </div>
+          
+          <div class="input-group">
+            <label class="input-label">Encryption Password</label>
+            <input type="password" id="joinPassword" class="input-field" placeholder="Enter shared password">
+            <div id="passwordHint" style="color: var(--accent); font-size: 0.875rem; margin-top: 0.5rem; display: none;"></div>
+          </div>
+          
+          <button class="btn btn-primary" style="width: 100%;" onclick="app.startJoin()">
+            Join Room
+          </button>
+          
+          <button class="btn btn-secondary" style="width: 100%; margin-top: 1rem;" onclick="app.showWelcome()">
+            Back
+          </button>
+        </div>
+      </div>
     </div>
-    <button id="installBtn" class="install-btn" type="button" disabled aria-disabled="true">Install</button>
+
+    <!-- Chat Screen -->
+    <div id="chatScreen" class="screen">
+      <div class="chat-container">
+        <div class="chat-header">
+          <div class="chat-room-info">
+            <span>🔐</span>
+            <div class="room-badge" id="currentRoom">xxx-xxx-xxx</div>
+          </div>
+          <button class="btn btn-secondary" style="padding: 0.5rem 1rem;" onclick="app.disconnect()">
+            Leave
+          </button>
+        </div>
+
+        <div id="chatMessages" class="chat-messages">
+          <!-- Messages will appear here -->
+        </div>
+
+        <div class="chat-input-container">
+          <div class="chat-input-wrapper">
+            <input type="text" id="messageInput" class="chat-input" placeholder="Type a secure message...">
+            <button id="sendBtn" class="send-btn">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13"></line>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Load PeerJS -->
   <script src="https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js"></script>
 
   <script>
-    // ============================================================
-    // SERVICE WORKER
-    // ============================================================
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js')
-        .then(reg => console.log('Service Worker registered:', reg))
-        .catch(err => console.warn('Service Worker registration failed:', err));
-    }
-
-    // ============================================================
-    // PWA INSTALL
-    // ============================================================
-    let deferredPrompt;
-
-    const installPromptEl = document.getElementById('installPrompt');
-    const installBtn = document.getElementById('installBtn');
-    const iosInstructions = document.getElementById('iosInstructions');
-
-    const showInstallPrompt = () => {
-      if (!installPromptEl) return;
-      installPromptEl.hidden = false;
-      installPromptEl.setAttribute('aria-hidden', 'false');
-      requestAnimationFrame(() => installPromptEl.classList.add('show'));
-    };
-
-    const hideInstallPrompt = () => {
-      if (!installPromptEl) return;
-      installPromptEl.classList.remove('show');
-      installPromptEl.setAttribute('aria-hidden', 'true');
-      if (installBtn) {
-        installBtn.disabled = true;
-        installBtn.setAttribute('aria-disabled', 'true');
-      }
-      setTimeout(() => {
-        if (!installPromptEl.classList.contains('show')) {
-          installPromptEl.hidden = true;
-        }
-      }, 400);
-    };
-
-    const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
-    const isIOS = /iphone|ipad|ipod/.test(window.navigator.userAgent.toLowerCase());
-
-    if (isIOS && !isInStandaloneMode && iosInstructions) {
-      iosInstructions.classList.add('show');
-      if (installBtn) {
-        installBtn.style.display = 'none';
-        installBtn.setAttribute('aria-hidden', 'true');
-        installBtn.setAttribute('tabindex', '-1');
-      }
-      showInstallPrompt();
-    }
-
-    if (isInStandaloneMode) {
-      hideInstallPrompt();
-    }
-
-    window.addEventListener('beforeinstallprompt', (e) => {
-      e.preventDefault();
-      deferredPrompt = e;
-      console.log('Install prompt ready');
-
-      if (installBtn) {
-        installBtn.style.display = '';
-        installBtn.removeAttribute('aria-hidden');
-        installBtn.removeAttribute('tabindex');
-        installBtn.disabled = false;
-        installBtn.setAttribute('aria-disabled', 'false');
-      }
-
-      showInstallPrompt();
-    });
-
-    installBtn?.addEventListener('click', async () => {
-      if (!deferredPrompt) {
-        console.log('No install prompt available');
-        return;
-      }
-
-      deferredPrompt.prompt();
-      const { outcome } = await deferredPrompt.userChoice;
-      console.log('Install outcome:', outcome);
-
-      deferredPrompt = null;
-      hideInstallPrompt();
-    });
-
-    // Detect if app is installed
-    window.addEventListener('appinstalled', () => {
-      console.log('PWA installed');
-      deferredPrompt = null;
-      hideInstallPrompt();
-    });
-
-    const standaloneMedia = window.matchMedia('(display-mode: standalone)');
-    if (standaloneMedia && 'addEventListener' in standaloneMedia) {
-      standaloneMedia.addEventListener('change', (event) => {
-        if (event.matches) {
-          hideInstallPrompt();
-        }
-      });
-    } else if (standaloneMedia && 'addListener' in standaloneMedia) {
-      standaloneMedia.addListener((event) => {
-        if (event.matches) {
-          hideInstallPrompt();
-        }
-      });
-    }
-
-    // ============================================================
-    // STORAGE CLASS
-    // ============================================================
-    class Storage {
-      constructor() {
-        this.dbName = 'SecureChatDB';
-        this.db = null;
-        this.available = false;
-      }
-
-      isReady() {
-        return this.available && !!this.db;
-      }
-
-      async init() {
-        if (!('indexedDB' in window)) {
-          console.warn('IndexedDB is not supported in this environment');
-          this.db = null;
-          this.available = false;
-          return false;
-        }
-
-        return new Promise((resolve) => {
-          let settled = false;
-          const finish = (result) => {
-            if (!settled) {
-              settled = true;
-              resolve(result);
-            }
-          };
-
-          let request;
-          try {
-            request = indexedDB.open(this.dbName, 1);
-          } catch (error) {
-            console.error('Failed to open IndexedDB:', error);
-            this.db = null;
-            this.available = false;
-            finish(false);
-            return;
-          }
-
-          request.onerror = (event) => {
-            console.error('IndexedDB error:', event.target.error);
-            this.db = null;
-            this.available = false;
-            finish(false);
-          };
-
-          request.onblocked = () => {
-            console.warn('IndexedDB request was blocked');
-            this.db = null;
-            this.available = false;
-            finish(false);
-          };
-
-          request.onsuccess = () => {
-            const dbInstance = request.result;
-            this.db = dbInstance;
-            this.available = true;
-
-            dbInstance.onclose = () => {
-              this.available = false;
-              if (this.db === dbInstance) {
-                this.db = null;
-              }
-            };
-
-            dbInstance.onversionchange = () => {
-              console.warn('IndexedDB version change detected, closing database');
-              this.available = false;
-              dbInstance.close();
-              if (this.db === dbInstance) {
-                this.db = null;
-              }
-            };
-
-            console.log('IndexedDB initialized');
-            finish(true);
-          };
-
-          request.onupgradeneeded = (e) => {
-            const db = e.target.result;
-
-            if (!db.objectStoreNames.contains('messages')) {
-              db.createObjectStore('messages', {
-                keyPath: 'id',
-                autoIncrement: true
-              }).createIndex('roomId', 'roomId');
-            }
-
-            if (!db.objectStoreNames.contains('rooms')) {
-              db.createObjectStore('rooms', { keyPath: 'roomId' });
-            }
-          };
-        });
-      }
-
-      async saveMessage(roomId, content, type) {
-        if (!this.isReady()) {
-          console.warn('Storage not available for saving messages');
-          return false;
-        }
-
-        try {
-          return new Promise((resolve) => {
-            const tx = this.db.transaction(['messages'], 'readwrite');
-            const request = tx.objectStore('messages').add({
-              roomId,
-              content,
-              type,
-              timestamp: Date.now()
-            });
-
-            request.onsuccess = () => resolve(true);
-            request.onerror = (event) => {
-              console.error('Failed to save message:', event.target.error);
-              resolve(false);
-            };
-          });
-        } catch (error) {
-          console.error('Failed to save message:', error);
-          return false;
-        }
-      }
-
-      async getMessages(roomId) {
-        if (!this.isReady()) return [];
-
-        try {
-          const tx = this.db.transaction(['messages'], 'readonly');
-          const index = tx.objectStore('messages').index('roomId');
-
-          return new Promise((resolve) => {
-            const messages = [];
-            const request = index.openCursor(IDBKeyRange.only(roomId));
-
-            request.onsuccess = (e) => {
-              const cursor = e.target.result;
-              if (cursor) {
-                messages.push(cursor.value);
-                cursor.continue();
-              } else {
-                resolve(messages.sort((a, b) => a.timestamp - b.timestamp));
-              }
-            };
-
-            request.onerror = () => {
-              resolve([]);
-            };
-          });
-        } catch (error) {
-          console.error('Failed to get messages:', error);
-          return [];
-        }
-      }
-
-      async saveRoom(roomId) {
-        if (!this.isReady()) return false;
-
-        try {
-          return new Promise((resolve) => {
-            const tx = this.db.transaction(['rooms'], 'readwrite');
-            const request = tx.objectStore('rooms').put({
-              roomId,
-              lastUsed: Date.now()
-            });
-
-            request.onsuccess = () => resolve(true);
-            request.onerror = (event) => {
-              console.error('Failed to save room:', event.target.error);
-              resolve(false);
-            };
-          });
-        } catch (error) {
-          console.error('Failed to save room:', error);
-          return false;
-        }
-      }
-
-      async getRooms() {
-        if (!this.isReady()) return [];
-
-        try {
-          const tx = this.db.transaction(['rooms'], 'readonly');
-          return new Promise((resolve) => {
-            const request = tx.objectStore('rooms').getAll();
-            request.onsuccess = () => {
-              resolve(request.result.sort((a, b) => b.lastUsed - a.lastUsed));
-            };
-            request.onerror = () => {
-              resolve([]);
-            };
-          });
-        } catch (error) {
-          console.error('Failed to get rooms:', error);
-          return [];
-        }
-      }
-
-      async deleteRoom(roomId) {
-        if (!this.isReady()) return false;
-
-        try {
-          return new Promise((resolve) => {
-            const tx = this.db.transaction(['rooms'], 'readwrite');
-            const request = tx.objectStore('rooms').delete(roomId);
-
-            request.onsuccess = () => resolve(true);
-            request.onerror = (event) => {
-              console.error('Failed to delete room:', event.target.error);
-              resolve(false);
-            };
-          });
-        } catch (error) {
-          console.error('Failed to delete room:', error);
-          return false;
-        }
-      }
-    }
-
-    // ============================================================
-    // ENCRYPTION
-    // ============================================================
-    async function deriveKey(password) {
-      const encoder = new TextEncoder();
-      const keyMaterial = await crypto.subtle.importKey(
-        'raw',
-        encoder.encode(password),
-        'PBKDF2',
-        false,
-        ['deriveBits', 'deriveKey']
-      );
-
-      return crypto.subtle.deriveKey(
-        {
-          name: 'PBKDF2',
-          salt: encoder.encode('secure-chat-salt-v1'),
-          iterations: 100000,
-          hash: 'SHA-256'
-        },
-        keyMaterial,
-        { name: 'AES-GCM', length: 256 },
-        true,
-        ['encrypt', 'decrypt']
-      );
-    }
-
-    async function encrypt(text, key) {
-      const iv = crypto.getRandomValues(new Uint8Array(12));
-      const encrypted = await crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv },
-        key,
-        new TextEncoder().encode(text)
-      );
-      
-      const combined = new Uint8Array(iv.length + encrypted.byteLength);
-      combined.set(iv);
-      combined.set(new Uint8Array(encrypted), iv.length);
-      return combined;
-    }
-
-    async function decrypt(data, key) {
-      const iv = data.slice(0, 12);
-      const ciphertext = data.slice(12);
-      
-      const decrypted = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv },
-        key,
-        ciphertext
-      );
-      
-      return new TextDecoder().decode(decrypted);
-    }
-
-    // ============================================================
-    // CHAT APP
-    // ============================================================
     class SecureChat {
       constructor() {
-        this.storage = new Storage();
         this.peer = null;
-        this.connection = null;
-        this.key = null;
+        this.conn = null;
         this.roomId = null;
-
-        this.initialize();
-      }
-
-      async initialize() {
+        this.cryptoKey = null;
+        this.isHost = false;
+        
+        this.initStorage();
+        this.loadRoomHistory();
+        this.checkForSharedLink();
         this.initEventListeners();
-        this.monitorConnection();
-
-        let storageReady = false;
-        try {
-          storageReady = await this.storage.init();
-        } catch (error) {
-          console.error('Storage initialization failed:', error);
-        }
-
-        if (storageReady) {
-          console.log('Storage initialized');
-          this.updateStorageWarning(false);
-          await this.loadRoomHistory();
-
-          if (navigator.storage && navigator.storage.persist) {
-            try {
-              const granted = await navigator.storage.persist();
-              console.log('Persistent storage:', granted ? 'granted' : 'denied');
-            } catch (error) {
-              console.error('Persistent storage request failed:', error);
-            }
-          }
-        } else {
-          console.warn('Continuing without persistent storage');
-          this.updateStorageWarning(true);
-        }
+        this.updateStatus('Disconnected', '');
       }
 
       initEventListeners() {
-        document.getElementById('hostBtn').onclick = () => this.showHostSetup();
-        document.getElementById('joinBtn').onclick = () => this.showJoinSetup();
-        document.getElementById('hostStart').onclick = () => this.startHosting();
-        document.getElementById('joinStart').onclick = () => this.joinRoom();
-        document.getElementById('sendBtn').onclick = () => this.sendMessage();
-        
-        document.getElementById('messageInput').onkeypress = (e) => {
+        // Enter key to send
+        document.getElementById('messageInput').addEventListener('keypress', (e) => {
           if (e.key === 'Enter') this.sendMessage();
+        });
+        
+        // Send button
+        document.getElementById('sendBtn').addEventListener('click', () => this.sendMessage());
+      }
+
+      // Check URL parameters for shared link
+      checkForSharedLink() {
+        const params = new URLSearchParams(window.location.search);
+        const room = params.get('room');
+        const key = params.get('key');
+        
+        if (room && key) {
+          document.getElementById('joinCode').value = room;
+          
+          try {
+            const decoded = atob(key);
+            const hint = document.getElementById('passwordHint');
+            hint.textContent = `Password hint: ${decoded}`;
+            hint.style.display = 'block';
+          } catch(e) {
+            // Invalid key
+          }
+          
+          this.showJoin();
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+      }
+
+      // Generate shareable link
+      generateShareLink(roomId, password) {
+        const baseUrl = window.location.origin + window.location.pathname;
+        const hint = password.length > 2 
+          ? `${password[0]}***${password[password.length-1]} (${password.length} chars)`
+          : `${password.length} characters`;
+        const encodedHint = btoa(hint);
+        
+        return `${baseUrl}?room=${encodeURIComponent(roomId)}&key=${encodeURIComponent(encodedHint)}`;
+      }
+
+      copyShareLink() {
+        const link = document.getElementById('shareLink').textContent;
+        if (link && link !== 'Generating link...') {
+          navigator.clipboard.writeText(link).then(() => {
+            const elem = document.getElementById('shareLink');
+            const original = elem.textContent;
+            elem.textContent = '✅ Link copied!';
+            setTimeout(() => {
+              elem.textContent = original;
+            }, 2000);
+          });
+        }
+      }
+
+      // Screen Navigation
+      showScreen(screenId) {
+        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+        document.getElementById(screenId).classList.add('active');
+      }
+
+      showWelcome() {
+        this.showScreen('welcomeScreen');
+        this.loadRoomHistory();
+      }
+
+      showHost() {
+        this.roomId = this.generateRoomId();
+        document.getElementById('roomCode').textContent = this.roomId;
+        document.getElementById('shareSection').style.display = 'none';
+        this.showScreen('hostScreen');
+      }
+
+      showJoin() {
+        this.showScreen('joinScreen');
+      }
+
+      showChat() {
+        document.getElementById('currentRoom').textContent = this.roomId;
+        this.showScreen('chatScreen');
+        document.getElementById('messageInput').focus();
+      }
+
+      // Storage
+      initStorage() {
+        this.storage = {
+          saveRoom: (roomId) => {
+            try {
+              let rooms = JSON.parse(localStorage.getItem('rooms') || '[]');
+              rooms = rooms.filter(r => r.id !== roomId);
+              rooms.unshift({ id: roomId, time: Date.now() });
+              rooms = rooms.slice(0, 5);
+              localStorage.setItem('rooms', JSON.stringify(rooms));
+            } catch(e) {
+              console.log('Storage not available');
+            }
+          },
+          getRooms: () => {
+            try {
+              return JSON.parse(localStorage.getItem('rooms') || '[]');
+            } catch(e) {
+              return [];
+            }
+          }
         };
       }
 
-      monitorConnection() {
-        window.addEventListener('online', () => {
-          document.getElementById('offlineBanner').classList.remove('show');
-        });
-
-        window.addEventListener('offline', () => {
-          document.getElementById('offlineBanner').classList.add('show');
-        });
-      }
-
-      updateStorageWarning(show) {
-        const warningEl = document.getElementById('storageWarning');
-        if (!warningEl) return;
-
-        if (show) {
-          warningEl.classList.add('show');
-          warningEl.setAttribute('aria-hidden', 'false');
+      loadRoomHistory() {
+        const rooms = this.storage.getRooms();
+        const container = document.getElementById('roomHistory');
+        const items = document.getElementById('historyItems');
+        
+        if (rooms.length > 0) {
+          container.style.display = 'block';
+          items.innerHTML = rooms.map(room => `
+            <div class="history-item" onclick="app.quickJoin('${room.id}')">
+              <span class="history-room">${room.id}</span>
+              <span class="history-time">${new Date(room.time).toLocaleDateString()}</span>
+            </div>
+          `).join('');
         } else {
-          warningEl.classList.remove('show');
-          warningEl.setAttribute('aria-hidden', 'true');
+          container.style.display = 'none';
         }
       }
 
-      isStorageReady() {
-        return this.storage?.isReady?.() ?? false;
+      quickJoin(roomId) {
+        document.getElementById('joinCode').value = roomId;
+        this.showJoin();
       }
 
-      async loadRoomHistory() {
-        const historyEl = document.getElementById('roomHistory');
-        const itemsEl = document.getElementById('historyItems');
-
-        if (!historyEl || !itemsEl) return;
-
-        if (!this.isStorageReady()) {
-          historyEl.style.display = 'none';
-          itemsEl.innerHTML = '';
-          return;
-        }
-
-        try {
-          const rooms = await this.storage.getRooms();
-          if (!rooms || rooms.length === 0) {
-            historyEl.style.display = 'none';
-            itemsEl.innerHTML = '';
-            return;
-          }
-
-          historyEl.style.display = 'block';
-          itemsEl.innerHTML = '';
-
-          rooms.slice(0, 3).forEach(room => {
-            const item = document.createElement('div');
-            item.className = 'history-item';
-            item.innerHTML = `
-              <span class="history-room">${room.roomId}</span>
-              <span class="history-time">${new Date(room.lastUsed).toLocaleDateString()}</span>
-            `;
-            item.onclick = () => {
-              document.getElementById('joinRoomCode').value = room.roomId;
-              this.showJoinSetup();
-            };
-            itemsEl.appendChild(item);
-          });
-        } catch (error) {
-          console.error('Failed to load room history:', error);
-        }
-      }
-
+      // Utilities
       generateRoomId() {
+        const segments = [];
         const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-        const timestampSegment = Date.now().toString(36).slice(-3);
-        let result = '';
-
         for (let i = 0; i < 3; i++) {
-          if (i > 0) result += '-';
+          let segment = '';
           for (let j = 0; j < 3; j++) {
-            result += chars[Math.floor(Math.random() * chars.length)];
+            segment += chars[Math.floor(Math.random() * chars.length)];
           }
+          segments.push(segment);
         }
+        return segments.join('-');
+      }
 
-        let randomSuffix = '';
-        for (let i = 0; i < 3; i++) {
-          randomSuffix += chars[Math.floor(Math.random() * chars.length)];
+      copyRoomCode() {
+        const code = document.getElementById('roomCode').textContent;
+        if (code && code !== 'Loading...') {
+          navigator.clipboard.writeText(code).then(() => {
+            const elem = document.getElementById('roomCode');
+            const original = elem.textContent;
+            elem.textContent = '✅ Copied!';
+            setTimeout(() => {
+              elem.textContent = original;
+            }, 2000);
+          });
         }
-
-        return `${result}-${timestampSegment}-${randomSuffix}`;
       }
 
-      showHostSetup() {
-        this.roomId = this.generateRoomId();
-        document.getElementById('roomCode').textContent = this.roomId;
-        document.getElementById('welcomeScreen').style.display = 'none';
-        document.getElementById('hostSetup').style.display = 'flex';
+      updateStatus(text, type) {
+        document.getElementById('statusText').textContent = text;
+        const dot = document.getElementById('statusDot');
+        dot.className = 'status-dot';
+        if (type) dot.classList.add(type);
       }
 
-      showJoinSetup() {
-        document.getElementById('welcomeScreen').style.display = 'none';
-        document.getElementById('joinSetup').style.display = 'flex';
+      // Crypto
+      async deriveKey(password) {
+        const encoder = new TextEncoder();
+        const keyMaterial = await crypto.subtle.importKey(
+          'raw',
+          encoder.encode(password),
+          'PBKDF2',
+          false,
+          ['deriveBits', 'deriveKey']
+        );
+
+        return crypto.subtle.deriveKey(
+          {
+            name: 'PBKDF2',
+            salt: encoder.encode('secure-p2p-chat-salt-v1'),
+            iterations: 100000,
+            hash: 'SHA-256'
+          },
+          keyMaterial,
+          { name: 'AES-GCM', length: 256 },
+          false,
+          ['encrypt', 'decrypt']
+        );
       }
 
-      async startHosting() {
+      async encrypt(text) {
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const encoded = new TextEncoder().encode(text);
+        const encrypted = await crypto.subtle.encrypt(
+          { name: 'AES-GCM', iv },
+          this.cryptoKey,
+          encoded
+        );
+        
+        const combined = new Uint8Array(iv.length + encrypted.byteLength);
+        combined.set(iv);
+        combined.set(new Uint8Array(encrypted), iv.length);
+        return combined;
+      }
+
+      async decrypt(data) {
+        const iv = data.slice(0, 12);
+        const encrypted = data.slice(12);
+        
+        try {
+          const decrypted = await crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv },
+            this.cryptoKey,
+            encrypted
+          );
+          return new TextDecoder().decode(decrypted);
+        } catch(e) {
+          console.error('Decryption failed');
+          return null;
+        }
+      }
+
+      // Peer Connection
+      async startHost() {
         const password = document.getElementById('hostPassword').value;
         if (!password) {
-          alert('Please set a password');
+          alert('Please enter a password');
           return;
         }
 
-        this.key = await deriveKey(password);
-
-        this.updateStatus('Connecting...', 'connecting');
-
-        this.createPeerConnection();
+        this.isHost = true;
+        this.cryptoKey = await this.deriveKey(password);
+        this.updateStatus('Creating room...', 'connecting');
+        
+        // Generate and display the share link
+        const shareLink = this.generateShareLink(this.roomId, password);
+        document.getElementById('shareLink').textContent = shareLink;
+        document.getElementById('shareSection').style.display = 'block';
+        
+        this.initPeer(this.roomId);
       }
 
-      createPeerConnection(retryCount = 0) {
-        if (retryCount > 0) {
-          this.roomId = this.generateRoomId();
-          const roomCodeEl = document.getElementById('roomCode');
-          if (roomCodeEl) {
-            roomCodeEl.textContent = this.roomId;
-          }
-          this.addSystemMessage(`Room ID was taken, trying: ${this.roomId}`);
-        }
-
-        if (this.peer) {
-          this.peer.destroy();
-          this.peer = null;
-        }
-
-        console.log('Creating peer with ID:', this.roomId);
-
-        this.peer = new Peer(this.roomId, {
-          debug: 3,
-          secure: true,
-          config: {
-            iceServers: [
-              { urls: 'stun:stun.l.google.com:19302' },
-              { urls: 'stun:stun1.l.google.com:19302' }
-            ]
-          }
-        });
-
-        this.peer.on('open', async (id) => {
-          console.log('Room created successfully:', id);
-          this.addSystemMessage(`Room created: ${id}`);
-          this.updateStatus('Waiting for peer...', 'connecting');
-
-          if (this.isStorageReady()) {
-            try {
-              await this.storage.saveRoom(id);
-              await this.loadRoomHistory();
-            } catch (error) {
-              console.error('Failed to persist hosted room:', error);
-            }
-          }
-        });
-
-        this.peer.on('connection', (conn) => {
-          console.log('Peer connecting');
-          this.addSystemMessage('Peer is connecting...');
-          this.setupConnection(conn);
-        });
-
-        this.peer.on('error', async (err) => {
-          console.error('Peer error:', err);
-
-          if (err.type === 'unavailable-id') {
-            console.log('Room ID taken, generating new one...');
-
-            if (retryCount < 3) {
-              if (this.peer) {
-                this.peer.destroy();
-                this.peer = null;
-              }
-
-              if (this.isStorageReady()) {
-                await this.storage.deleteRoom(this.roomId);
-                await this.loadRoomHistory();
-              }
-
-              setTimeout(() => {
-                this.createPeerConnection(retryCount + 1);
-              }, 1000);
-            } else {
-              this.addSystemMessage('Failed to create room after 3 attempts');
-            }
-          } else {
-            this.addSystemMessage(`Error: ${err.type}`);
-          }
-        });
-      }
-
-      async joinRoom() {
-        this.roomId = document.getElementById('joinRoomCode').value;
+      async startJoin() {
+        const roomId = document.getElementById('joinCode').value.trim();
         const password = document.getElementById('joinPassword').value;
         
-        if (!this.roomId || !password) {
+        if (!roomId || !password) {
           alert('Please enter room code and password');
           return;
         }
 
-        this.key = await deriveKey(password);
-        if (this.isStorageReady()) {
-          try {
-            await this.storage.saveRoom(this.roomId);
-            await this.loadRoomHistory();
-          } catch (error) {
-            console.error('Failed to persist joined room:', error);
-          }
-        }
-        
+        this.roomId = roomId;
+        this.isHost = false;
+        this.cryptoKey = await this.deriveKey(password);
         this.updateStatus('Connecting...', 'connecting');
         
-        const myId = this.generateRoomId();
-        this.peer = new Peer(myId, {
+        const joinerId = 'join-' + Math.random().toString(36).substr(2, 9);
+        this.initPeer(joinerId);
+      }
+
+      initPeer(id) {
+        if (this.peer) {
+          this.peer.destroy();
+        }
+
+        this.peer = new Peer(id, {
           debug: 2,
           config: {
             iceServers: [
@@ -1525,96 +1108,99 @@
           }
         });
 
-        this.peer.on('open', () => {
-          const conn = this.peer.connect(this.roomId);
-          this.setupConnection(conn);
+        this.peer.on('open', (peerId) => {
+          console.log('Connected to signaling server with ID:', peerId);
+          
+          if (this.isHost) {
+            this.updateStatus('Waiting for peer...', 'connecting');
+            this.showChat();
+            this.addSystemMessage('Room created. Waiting for someone to join...');
+          } else {
+            this.conn = this.peer.connect(this.roomId);
+            this.setupConnection();
+          }
         });
-        
+
+        if (this.isHost) {
+          this.peer.on('connection', (conn) => {
+            console.log('Incoming connection');
+            this.conn = conn;
+            this.setupConnection();
+          });
+        }
+
         this.peer.on('error', (err) => {
           console.error('Peer error:', err);
-          this.addSystemMessage(`Failed to connect: ${err.type}`, 'error');
+          
+          if (err.type === 'peer-unavailable') {
+            this.addSystemMessage('❌ Room not found. Make sure the room code is correct.');
+            this.updateStatus('Error', '');
+            setTimeout(() => this.showJoin(), 2000);
+          } else if (err.type === 'unavailable-id') {
+            if (this.isHost) {
+              this.roomId = this.generateRoomId();
+              document.getElementById('roomCode').textContent = this.roomId;
+              setTimeout(() => this.initPeer(this.roomId), 1000);
+            }
+          } else {
+            this.addSystemMessage(`❌ Connection error: ${err.type}`);
+            this.updateStatus('Error', '');
+          }
         });
       }
 
-      setupConnection(conn) {
-        this.connection = conn;
-        
-        conn.on('open', async () => {
+      setupConnection() {
+        this.conn.on('open', () => {
+          console.log('Peer connection established');
           this.updateStatus('Connected', 'connected');
-          this.addSystemMessage('✅ Secure connection established!');
-          this.showChat();
-
-          if (this.isStorageReady()) {
-            try {
-              const messages = await this.storage.getMessages(this.roomId);
-              messages.forEach(msg => {
-                this.displayMessage(msg.content, msg.type, false);
-              });
-            } catch (error) {
-              console.error('Failed to load stored messages:', error);
-            }
+          this.storage.saveRoom(this.roomId);
+          
+          if (!this.isHost) {
+            this.showChat();
           }
+          
+          this.addSystemMessage('✅ Secure connection established');
         });
 
-        conn.on('data', async (data) => {
-          try {
-            const decrypted = await decrypt(new Uint8Array(data), this.key);
+        this.conn.on('data', async (data) => {
+          const decrypted = await this.decrypt(new Uint8Array(data));
+          if (decrypted) {
             this.displayMessage(decrypted, 'them');
-            if (this.isStorageReady()) {
-              await this.storage.saveMessage(this.roomId, decrypted, 'them');
-            }
-          } catch (err) {
-            this.addSystemMessage('Failed to decrypt message');
+          } else {
+            this.addSystemMessage('⚠️ Failed to decrypt message');
           }
         });
 
-        conn.on('close', () => {
+        this.conn.on('close', () => {
           this.updateStatus('Disconnected', '');
-          this.addSystemMessage('Connection closed');
-          setTimeout(() => this.disconnect(), 2000);
+          this.addSystemMessage('👋 Peer disconnected');
         });
-        
-        conn.on('error', (err) => {
+
+        this.conn.on('error', (err) => {
           console.error('Connection error:', err);
-          this.addSystemMessage('Connection error occurred');
+          this.addSystemMessage('⚠️ Connection error occurred');
         });
       }
 
-      showChat() {
-        document.getElementById('hostSetup').style.display = 'none';
-        document.getElementById('joinSetup').style.display = 'none';
-        document.getElementById('chatInterface').style.display = 'flex';
-        document.getElementById('currentRoom').textContent = this.roomId;
-        document.getElementById('messageInput').focus();
-      }
-
+      // Messaging
       async sendMessage() {
         const input = document.getElementById('messageInput');
         const text = input.value.trim();
-        if (!text || !this.connection) return;
+        
+        if (!text || !this.conn) return;
         
         input.value = '';
         this.displayMessage(text, 'me');
-
-        if (this.isStorageReady()) {
-          await this.storage.saveMessage(this.roomId, text, 'me');
-        }
-
-        try {
-          const encrypted = await encrypt(text, this.key);
-          this.connection.send(encrypted);
-        } catch (err) {
-          console.error('Send error:', err);
-          this.addSystemMessage('Failed to send message');
-        }
+        
+        const encrypted = await this.encrypt(text);
+        this.conn.send(encrypted);
       }
 
-      displayMessage(text, type, animate = true) {
+      displayMessage(text, type) {
         const container = document.getElementById('chatMessages');
         
         const message = document.createElement('div');
         message.className = `message ${type}`;
-        if (!animate) message.style.animation = 'none';
         
         const content = document.createElement('div');
         content.className = 'message-content';
@@ -1647,58 +1233,35 @@
         container.scrollTop = container.scrollHeight;
       }
 
-      updateStatus(text, status) {
-        document.getElementById('statusText').textContent = text;
-        const dot = document.getElementById('statusDot');
-        dot.className = 'status-dot';
-        if (status) dot.classList.add(status);
-      }
-
+      // Disconnect
       disconnect() {
-        if (this.connection) this.connection.close();
+        if (this.conn) this.conn.close();
         if (this.peer) this.peer.destroy();
         
-        this.connection = null;
+        this.conn = null;
         this.peer = null;
-        this.key = null;
+        this.cryptoKey = null;
+        this.roomId = null;
         
-        document.getElementById('chatInterface').style.display = 'none';
-        document.getElementById('welcomeScreen').style.display = 'flex';
         document.getElementById('chatMessages').innerHTML = '';
-
-        if (this.isStorageReady()) {
-          this.loadRoomHistory();
-        }
-      }
-    }
-
-    // Global functions
-    function backToWelcome() {
-      document.getElementById('hostSetup').style.display = 'none';
-      document.getElementById('joinSetup').style.display = 'none';
-      document.getElementById('welcomeScreen').style.display = 'flex';
-    }
-
-    function copyRoomCode() {
-      const code = document.getElementById('roomCode').textContent;
-      navigator.clipboard.writeText(code).then(() => {
-        const el = document.getElementById('roomCode');
-        const original = el.textContent;
-        el.textContent = '✅ Copied!';
-        setTimeout(() => {
-          el.textContent = original;
-        }, 1500);
-      });
-    }
-
-    function disconnect() {
-      if (window.app) {
-        window.app.disconnect();
+        document.getElementById('hostPassword').value = '';
+        document.getElementById('joinPassword').value = '';
+        document.getElementById('joinCode').value = '';
+        
+        this.updateStatus('Disconnected', '');
+        this.showWelcome();
       }
     }
 
     // Initialize app
-    window.app = new SecureChat();
+    const app = new SecureChat();
+
+    // Service Worker (if you have one)
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(err => {
+        console.log('Service worker registration failed:', err);
+      });
+    }
   </script>
 </body>
 </html>
