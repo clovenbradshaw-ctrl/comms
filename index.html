@@ -956,82 +956,129 @@
       constructor() {
         this.dbName = 'SecureChatDB';
         this.db = null;
-        this.init();
       }
 
       async init() {
         return new Promise((resolve) => {
-          const request = indexedDB.open(this.dbName, 1);
-          
-          request.onupgradeneeded = (e) => {
-            const db = e.target.result;
-            
-            if (!db.objectStoreNames.contains('messages')) {
-              const messages = db.createObjectStore('messages', { 
-                keyPath: 'id', 
-                autoIncrement: true 
-              });
-              messages.createIndex('roomId', 'roomId');
-            }
-            
-            if (!db.objectStoreNames.contains('rooms')) {
-              db.createObjectStore('rooms', { keyPath: 'roomId' });
-            }
-          };
-          
-          request.onsuccess = () => {
-            this.db = request.result;
+          try {
+            const request = indexedDB.open(this.dbName, 1);
+
+            request.onerror = () => {
+              console.error('IndexedDB error:', request.error);
+              this.db = null;
+              resolve();
+            };
+
+            request.onsuccess = () => {
+              this.db = request.result;
+              console.log('IndexedDB initialized');
+              resolve();
+            };
+
+            request.onupgradeneeded = (e) => {
+              const db = e.target.result;
+
+              if (!db.objectStoreNames.contains('messages')) {
+                db.createObjectStore('messages', {
+                  keyPath: 'id',
+                  autoIncrement: true
+                }).createIndex('roomId', 'roomId');
+              }
+
+              if (!db.objectStoreNames.contains('rooms')) {
+                db.createObjectStore('rooms', { keyPath: 'roomId' });
+              }
+            };
+          } catch (error) {
+            console.error('Failed to open IndexedDB:', error);
+            this.db = null;
             resolve();
-          };
+          }
         });
       }
 
       async saveMessage(roomId, content, type) {
-        const tx = this.db.transaction(['messages'], 'readwrite');
-        return tx.objectStore('messages').add({
-          roomId,
-          content,
-          type,
-          timestamp: Date.now()
-        });
+        if (!this.db) {
+          console.warn('Database not available');
+          return;
+        }
+
+        try {
+          const tx = this.db.transaction(['messages'], 'readwrite');
+          return tx.objectStore('messages').add({
+            roomId,
+            content,
+            type,
+            timestamp: Date.now()
+          });
+        } catch (error) {
+          console.error('Failed to save message:', error);
+        }
       }
 
       async getMessages(roomId) {
-        const tx = this.db.transaction(['messages'], 'readonly');
-        const index = tx.objectStore('messages').index('roomId');
-        
-        return new Promise((resolve) => {
-          const messages = [];
-          const request = index.openCursor(IDBKeyRange.only(roomId));
-          
-          request.onsuccess = (e) => {
-            const cursor = e.target.result;
-            if (cursor) {
-              messages.push(cursor.value);
-              cursor.continue();
-            } else {
-              resolve(messages.sort((a, b) => a.timestamp - b.timestamp));
-            }
-          };
-        });
+        if (!this.db) return [];
+
+        try {
+          const tx = this.db.transaction(['messages'], 'readonly');
+          const index = tx.objectStore('messages').index('roomId');
+
+          return new Promise((resolve) => {
+            const messages = [];
+            const request = index.openCursor(IDBKeyRange.only(roomId));
+
+            request.onsuccess = (e) => {
+              const cursor = e.target.result;
+              if (cursor) {
+                messages.push(cursor.value);
+                cursor.continue();
+              } else {
+                resolve(messages.sort((a, b) => a.timestamp - b.timestamp));
+              }
+            };
+
+            request.onerror = () => {
+              resolve([]);
+            };
+          });
+        } catch (error) {
+          console.error('Failed to get messages:', error);
+          return [];
+        }
       }
 
       async saveRoom(roomId) {
-        const tx = this.db.transaction(['rooms'], 'readwrite');
-        return tx.objectStore('rooms').put({
-          roomId,
-          lastUsed: Date.now()
-        });
+        if (!this.db) return;
+
+        try {
+          const tx = this.db.transaction(['rooms'], 'readwrite');
+          return tx.objectStore('rooms').put({
+            roomId,
+            lastUsed: Date.now()
+          });
+        } catch (error) {
+          console.error('Failed to save room:', error);
+        }
       }
 
       async getRooms() {
-        const tx = this.db.transaction(['rooms'], 'readonly');
-        return new Promise((resolve) => {
-          const request = tx.objectStore('rooms').getAll();
-          request.onsuccess = () => {
-            resolve(request.result.sort((a, b) => b.lastUsed - a.lastUsed));
-          };
-        });
+        if (!this.db) return [];
+
+        try {
+          const tx = this.db.transaction(['rooms'], 'readonly');
+          return new Promise((resolve) => {
+            const request = tx.objectStore('rooms').getAll();
+            request.onsuccess = () => {
+              resolve(request.result.sort((a, b) => b.lastUsed - a.lastUsed));
+            };
+            request.onerror = () => {
+              resolve([]);
+            };
+          });
+        } catch (error) {
+          console.error('Failed to get rooms:', error);
+          return [];
+        }
       }
     }
 
@@ -1099,16 +1146,27 @@
         this.connection = null;
         this.key = null;
         this.roomId = null;
-        
-        this.initEventListeners();
-        this.loadRoomHistory();
-        this.monitorConnection();
-        
-        // Request persistent storage
-        if (navigator.storage && navigator.storage.persist) {
-          navigator.storage.persist().then(granted => {
+
+        this.initialize();
+      }
+
+      async initialize() {
+        try {
+          await this.storage.init();
+          console.log('Storage initialized');
+
+          this.initEventListeners();
+          await this.loadRoomHistory();
+          this.monitorConnection();
+
+          if (navigator.storage && navigator.storage.persist) {
+            const granted = await navigator.storage.persist();
             console.log('Persistent storage:', granted ? 'granted' : 'denied');
-          });
+          }
+        } catch (error) {
+          console.error('Initialization failed:', error);
+          this.initEventListeners();
+          this.monitorConnection();
         }
       }
 
@@ -1135,28 +1193,37 @@
       }
 
       async loadRoomHistory() {
-        const rooms = await this.storage.getRooms();
-        if (rooms.length === 0) return;
-        
-        const historyEl = document.getElementById('roomHistory');
-        const itemsEl = document.getElementById('historyItems');
-        
-        historyEl.style.display = 'block';
-        itemsEl.innerHTML = '';
-        
-        rooms.slice(0, 3).forEach(room => {
-          const item = document.createElement('div');
-          item.className = 'history-item';
-          item.innerHTML = `
-            <span class="history-room">${room.roomId}</span>
-            <span class="history-time">${new Date(room.lastUsed).toLocaleDateString()}</span>
-          `;
-          item.onclick = () => {
-            document.getElementById('joinRoomCode').value = room.roomId;
-            this.showJoinSetup();
-          };
-          itemsEl.appendChild(item);
-        });
+        try {
+          if (!this.storage.db) {
+            console.warn('Storage not ready for room history');
+            return;
+          }
+
+          const rooms = await this.storage.getRooms();
+          if (rooms.length === 0) return;
+
+          const historyEl = document.getElementById('roomHistory');
+          const itemsEl = document.getElementById('historyItems');
+
+          historyEl.style.display = 'block';
+          itemsEl.innerHTML = '';
+
+          rooms.slice(0, 3).forEach(room => {
+            const item = document.createElement('div');
+            item.className = 'history-item';
+            item.innerHTML = `
+              <span class="history-room">${room.roomId}</span>
+              <span class="history-time">${new Date(room.lastUsed).toLocaleDateString()}</span>
+            `;
+            item.onclick = () => {
+              document.getElementById('joinRoomCode').value = room.roomId;
+              this.showJoinSetup();
+            };
+            itemsEl.appendChild(item);
+          });
+        } catch (error) {
+          console.error('Failed to load room history:', error);
+        }
       }
 
       generateRoomId() {
@@ -1191,12 +1258,21 @@
         }
 
         this.key = await deriveKey(password);
-        await this.storage.saveRoom(this.roomId);
-        
+        if (this.storage && this.storage.db) {
+          await this.storage.saveRoom(this.roomId);
+        }
+
         this.updateStatus('Connecting...', 'connecting');
-        
+
+        this.createPeerConnection();
+      }
+
+      createPeerConnection(retryCount = 0) {
+        console.log('Creating peer with ID:', this.roomId);
+
         this.peer = new Peer(this.roomId, {
-          debug: 2,
+          debug: 3,
+          secure: true,
           config: {
             iceServers: [
               { urls: 'stun:stun.l.google.com:19302' },
@@ -1205,18 +1281,47 @@
           }
         });
 
-        this.peer.on('open', () => {
-          this.addSystemMessage('Room created. Waiting for peer...');
+        this.peer.on('open', (id) => {
+          console.log('Room created successfully:', id);
+          this.addSystemMessage(`Room created: ${id}`);
+          this.updateStatus('Waiting for peer...', 'connecting');
         });
 
         this.peer.on('connection', (conn) => {
+          console.log('Peer connecting');
           this.addSystemMessage('Peer is connecting...');
           this.setupConnection(conn);
         });
-        
+
         this.peer.on('error', (err) => {
           console.error('Peer error:', err);
-          this.addSystemMessage(`Error: ${err.type}`, 'error');
+
+          if (err.type === 'unavailable-id') {
+            console.log('Room ID taken, generating new one...');
+
+            if (retryCount < 3) {
+              if (this.peer) {
+                this.peer.destroy();
+                this.peer = null;
+              }
+
+              this.roomId = this.generateRoomId();
+              document.getElementById('roomCode').textContent = this.roomId;
+              this.addSystemMessage(`Room ID was taken, trying: ${this.roomId}`);
+
+              if (this.storage && this.storage.db) {
+                this.storage.saveRoom(this.roomId);
+              }
+
+              setTimeout(() => {
+                this.createPeerConnection(retryCount + 1);
+              }, 1000);
+            } else {
+              this.addSystemMessage('Failed to create room after 3 attempts');
+            }
+          } else {
+            this.addSystemMessage(`Error: ${err.type}`);
+          }
         });
       }
 
