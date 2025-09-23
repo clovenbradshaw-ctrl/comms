@@ -18,7 +18,8 @@
     {
       "src": "https://storage.googleapis.com/intelechia-content/download%20large.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     }
   ]
 }

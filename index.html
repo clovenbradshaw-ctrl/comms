@@ -571,20 +571,42 @@
       bottom: 2rem;
       left: 50%;
       transform: translateX(-50%) translateY(200%);
-      background: var(--bg-secondary);
+      background: rgba(26, 26, 26, 0.95);
       border: 1px solid var(--border);
       padding: 1rem 1.5rem;
-      border-radius: 100px;
+      border-radius: 16px;
       display: flex;
       align-items: center;
       gap: 1rem;
-      transition: transform 0.5s ease;
+      transition: transform 0.4s ease, opacity 0.4s ease;
       z-index: 1000;
       box-shadow: var(--shadow);
+      opacity: 0;
+      pointer-events: none;
     }
 
     .install-prompt.show {
       transform: translateX(-50%) translateY(0);
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .install-prompt .install-text {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .install-instructions {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      display: none;
+      max-width: 220px;
+      line-height: 1.4;
+    }
+
+    .install-instructions.show {
+      display: block;
     }
 
     .install-btn {
@@ -598,7 +620,13 @@
       transition: all 0.3s ease;
     }
 
-    .install-btn:hover {
+    .install-btn[disabled] {
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+      cursor: not-allowed;
+    }
+
+    .install-btn:not([disabled]):hover {
       background: var(--accent-hover);
     }
 
@@ -800,9 +828,12 @@
   </div>
 
   <!-- Install Prompt -->
-  <div id="installPrompt" class="install-prompt">
-    <span>📱 Install for offline access</span>
-    <button id="installBtn" class="install-btn">Install</button>
+  <div id="installPrompt" class="install-prompt" hidden aria-hidden="true">
+    <div class="install-text">
+      <span>📱 Install for offline access</span>
+      <span id="iosInstructions" class="install-instructions">Open the share menu and tap “Add to Home Screen”.</span>
+    </div>
+    <button id="installBtn" class="install-btn" type="button" disabled aria-disabled="true">Install</button>
   </div>
 
   <!-- Load PeerJS -->
@@ -822,42 +853,101 @@
     // PWA INSTALL
     // ============================================================
     let deferredPrompt;
-    
+
+    const installPromptEl = document.getElementById('installPrompt');
+    const installBtn = document.getElementById('installBtn');
+    const iosInstructions = document.getElementById('iosInstructions');
+
+    const showInstallPrompt = () => {
+      if (!installPromptEl) return;
+      installPromptEl.hidden = false;
+      installPromptEl.setAttribute('aria-hidden', 'false');
+      requestAnimationFrame(() => installPromptEl.classList.add('show'));
+    };
+
+    const hideInstallPrompt = () => {
+      if (!installPromptEl) return;
+      installPromptEl.classList.remove('show');
+      installPromptEl.setAttribute('aria-hidden', 'true');
+      if (installBtn) {
+        installBtn.disabled = true;
+        installBtn.setAttribute('aria-disabled', 'true');
+      }
+      setTimeout(() => {
+        if (!installPromptEl.classList.contains('show')) {
+          installPromptEl.hidden = true;
+        }
+      }, 400);
+    };
+
+    const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+    const isIOS = /iphone|ipad|ipod/.test(window.navigator.userAgent.toLowerCase());
+
+    if (isIOS && !isInStandaloneMode && iosInstructions) {
+      iosInstructions.classList.add('show');
+      if (installBtn) {
+        installBtn.style.display = 'none';
+        installBtn.setAttribute('aria-hidden', 'true');
+        installBtn.setAttribute('tabindex', '-1');
+      }
+      showInstallPrompt();
+    }
+
+    if (isInStandaloneMode) {
+      hideInstallPrompt();
+    }
+
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
       deferredPrompt = e;
       console.log('Install prompt ready');
-      
-      // Show install prompt after 5 seconds
-      setTimeout(() => {
-        const prompt = document.getElementById('installPrompt');
-        if (prompt && deferredPrompt) {
-          prompt.classList.add('show');
-        }
-      }, 5000);
+
+      if (installBtn) {
+        installBtn.style.display = '';
+        installBtn.removeAttribute('aria-hidden');
+        installBtn.removeAttribute('tabindex');
+        installBtn.disabled = false;
+        installBtn.setAttribute('aria-disabled', 'false');
+      }
+
+      showInstallPrompt();
     });
 
-    document.getElementById('installBtn')?.addEventListener('click', async () => {
-      const prompt = document.getElementById('installPrompt');
-      
+    installBtn?.addEventListener('click', async () => {
       if (!deferredPrompt) {
         console.log('No install prompt available');
         return;
       }
-      
+
       deferredPrompt.prompt();
       const { outcome } = await deferredPrompt.userChoice;
       console.log('Install outcome:', outcome);
-      
+
       deferredPrompt = null;
-      prompt.classList.remove('show');
+      hideInstallPrompt();
     });
 
     // Detect if app is installed
     window.addEventListener('appinstalled', () => {
       console.log('PWA installed');
       deferredPrompt = null;
+      hideInstallPrompt();
     });
+
+    const standaloneMedia = window.matchMedia('(display-mode: standalone)');
+    if (standaloneMedia && 'addEventListener' in standaloneMedia) {
+      standaloneMedia.addEventListener('change', (event) => {
+        if (event.matches) {
+          hideInstallPrompt();
+        }
+      });
+    } else if (standaloneMedia && 'addListener' in standaloneMedia) {
+      standaloneMedia.addListener((event) => {
+        if (event.matches) {
+          hideInstallPrompt();
+        }
+      });
+    }
 
     // ============================================================
     // STORAGE CLASS
