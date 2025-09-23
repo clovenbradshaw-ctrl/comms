@@ -1,0 +1,1322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <meta name="description" content="Secure P2P chat with end-to-end encryption">
+  
+  <!-- PWA Meta Tags -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="Secure Chat">
+  
+  <!-- Manifest -->
+  <link rel="manifest" href="manifest.json">
+  
+  <!-- Icons -->
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+  
+  <title>Secure P2P Chat</title>
+  
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      --bg-primary: #000000;
+      --bg-secondary: #1a1a1a;
+      --bg-tertiary: #2a2a2a;
+      --text-primary: #ffffff;
+      --text-secondary: #a0a0a0;
+      --accent: #0066ff;
+      --accent-hover: #0052cc;
+      --success: #00d68f;
+      --error: #ff3b30;
+      --warning: #ffaa00;
+      --message-bg: #1a1a1a;
+      --message-me: #0066ff;
+      --border: #333;
+      --shadow: 0 10px 40px rgba(0, 0, 0, 0.8);
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    /* Animated Background */
+    body::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: 
+        radial-gradient(circle at 20% 50%, rgba(0, 102, 255, 0.2) 0%, transparent 50%),
+        radial-gradient(circle at 80% 80%, rgba(255, 0, 128, 0.1) 0%, transparent 50%),
+        radial-gradient(circle at 40% 20%, rgba(0, 255, 136, 0.1) 0%, transparent 50%);
+      animation: backgroundShift 20s ease-in-out infinite;
+      pointer-events: none;
+    }
+
+    @keyframes backgroundShift {
+      0%, 100% { opacity: 0.5; transform: scale(1) rotate(0deg); }
+      50% { opacity: 1; transform: scale(1.1) rotate(10deg); }
+    }
+
+    /* Main Container */
+    .app {
+      width: 100%;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      z-index: 1;
+      max-width: 100%;
+      margin: 0 auto;
+    }
+
+    /* Header */
+    .header {
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      padding: 1rem 1.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      min-height: 60px;
+    }
+
+    .logo {
+      font-size: 1.25rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      letter-spacing: -0.5px;
+    }
+
+    .logo-icon {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, #0066ff, #00d68f);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.2rem;
+    }
+
+    .connection-badge {
+      padding: 0.5rem 1rem;
+      background: var(--bg-tertiary);
+      border-radius: 100px;
+      font-size: 0.875rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: all 0.3s ease;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      background: var(--text-secondary);
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+
+    .status-dot.connected {
+      background: var(--success);
+    }
+
+    .status-dot.connecting {
+      background: var(--warning);
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(1.2); }
+    }
+
+    /* Welcome Screen */
+    .welcome {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    .welcome-card {
+      background: rgba(26, 26, 26, 0.6);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      padding: 3rem;
+      max-width: 500px;
+      width: 100%;
+      box-shadow: var(--shadow);
+    }
+
+    .welcome h1 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+      background: linear-gradient(135deg, #fff, #a0a0a0);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .welcome p {
+      color: var(--text-secondary);
+      margin-bottom: 2rem;
+      line-height: 1.6;
+    }
+
+    .features {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+      margin: 2rem 0;
+    }
+
+    .feature {
+      padding: 1rem;
+      background: var(--bg-tertiary);
+      border-radius: 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .feature-icon {
+      font-size: 1.5rem;
+    }
+
+    .feature-text {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+    }
+
+    .action-buttons {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+
+    .btn {
+      padding: 1rem 2rem;
+      border: none;
+      border-radius: 12px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      outline: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-hover);
+      transform: translateY(-2px);
+      box-shadow: 0 10px 30px rgba(0, 102, 255, 0.3);
+    }
+
+    .btn-secondary {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+    }
+
+    .btn-secondary:hover {
+      background: #333;
+      transform: translateY(-2px);
+    }
+
+    /* Room Setup */
+    .room-setup {
+      padding: 2rem 0;
+    }
+
+    .room-code-display {
+      background: var(--bg-primary);
+      border: 2px dashed var(--accent);
+      border-radius: 16px;
+      padding: 1.5rem;
+      margin: 1.5rem 0;
+      font-family: 'Monaco', 'Courier New', monospace;
+      font-size: 1.5rem;
+      letter-spacing: 0.3rem;
+      text-align: center;
+      color: var(--accent);
+      user-select: all;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+
+    .room-code-display:hover {
+      background: rgba(0, 102, 255, 0.1);
+      transform: scale(1.02);
+    }
+
+    .input-group {
+      margin: 1.5rem 0;
+    }
+
+    .input-label {
+      display: block;
+      margin-bottom: 0.5rem;
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+
+    .input-field {
+      width: 100%;
+      padding: 1rem;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      color: var(--text-primary);
+      font-size: 1rem;
+      transition: all 0.3s ease;
+      outline: none;
+    }
+
+    .input-field:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.1);
+    }
+
+    /* Chat Interface */
+    .chat-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      background: var(--bg-primary);
+    }
+
+    .chat-header {
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .chat-room-info {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .room-badge {
+      padding: 0.5rem 1rem;
+      background: var(--bg-tertiary);
+      border-radius: 100px;
+      font-size: 0.875rem;
+      font-family: monospace;
+      color: var(--accent);
+    }
+
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      scroll-behavior: smooth;
+    }
+
+    .chat-messages::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    .chat-messages::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .chat-messages::-webkit-scrollbar-thumb {
+      background: var(--bg-tertiary);
+      border-radius: 100px;
+    }
+
+    .message {
+      display: flex;
+      align-items: flex-end;
+      gap: 0.5rem;
+      animation: messageIn 0.3s ease;
+    }
+
+    @keyframes messageIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .message.me {
+      flex-direction: row-reverse;
+    }
+
+    .message-content {
+      max-width: 70%;
+      padding: 0.875rem 1.25rem;
+      background: var(--message-bg);
+      border-radius: 18px 18px 18px 4px;
+      word-wrap: break-word;
+      position: relative;
+    }
+
+    .message.me .message-content {
+      background: var(--message-me);
+      border-radius: 18px 18px 4px 18px;
+    }
+
+    .message-text {
+      font-size: 0.95rem;
+      line-height: 1.5;
+    }
+
+    .message-time {
+      font-size: 0.7rem;
+      opacity: 0.6;
+      margin-top: 0.25rem;
+    }
+
+    .system-message {
+      text-align: center;
+      padding: 0.5rem 1rem;
+      margin: 0.5rem auto;
+      background: var(--bg-tertiary);
+      border-radius: 100px;
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+      max-width: fit-content;
+    }
+
+    .chat-input-container {
+      padding: 1.5rem;
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-top: 1px solid var(--border);
+    }
+
+    .chat-input-wrapper {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .chat-input {
+      flex: 1;
+      padding: 1rem 1.5rem;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: 100px;
+      color: var(--text-primary);
+      font-size: 0.95rem;
+      outline: none;
+      transition: all 0.3s ease;
+    }
+
+    .chat-input:focus {
+      border-color: var(--accent);
+      background: var(--bg-secondary);
+    }
+
+    .chat-input::placeholder {
+      color: var(--text-secondary);
+    }
+
+    .send-btn {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: none;
+      color: white;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .send-btn:hover:not(:disabled) {
+      background: var(--accent-hover);
+      transform: scale(1.1);
+    }
+
+    .send-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* Room History */
+    .room-history {
+      margin-top: 2rem;
+      padding-top: 2rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .history-title {
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+      margin-bottom: 1rem;
+      font-weight: 600;
+    }
+
+    .history-items {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .history-item {
+      padding: 1rem;
+      background: var(--bg-tertiary);
+      border-radius: 12px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .history-item:hover {
+      background: #333;
+      transform: translateX(5px);
+    }
+
+    .history-room {
+      font-family: monospace;
+      color: var(--accent);
+      font-size: 0.875rem;
+    }
+
+    .history-time {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+    }
+
+    /* Offline Banner */
+    .offline-banner {
+      position: fixed;
+      top: 60px;
+      left: 0;
+      right: 0;
+      background: var(--warning);
+      color: var(--bg-primary);
+      padding: 0.75rem;
+      text-align: center;
+      font-size: 0.875rem;
+      font-weight: 600;
+      transform: translateY(-100%);
+      transition: transform 0.3s ease;
+      z-index: 100;
+    }
+
+    .offline-banner.show {
+      transform: translateY(0);
+    }
+
+    /* Install Prompt */
+    .install-prompt {
+      position: fixed;
+      bottom: 2rem;
+      left: 50%;
+      transform: translateX(-50%) translateY(200%);
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      padding: 1rem 1.5rem;
+      border-radius: 100px;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      transition: transform 0.5s ease;
+      z-index: 1000;
+      box-shadow: var(--shadow);
+    }
+
+    .install-prompt.show {
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .install-btn {
+      padding: 0.5rem 1rem;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 100px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+
+    .install-btn:hover {
+      background: var(--accent-hover);
+    }
+
+    /* Responsive Design */
+    @media (max-width: 768px) {
+      .welcome-card {
+        padding: 2rem 1.5rem;
+      }
+
+      .welcome h1 {
+        font-size: 2rem;
+      }
+
+      .features {
+        grid-template-columns: 1fr;
+      }
+
+      .action-buttons {
+        grid-template-columns: 1fr;
+      }
+
+      .message-content {
+        max-width: 85%;
+      }
+
+      .room-code-display {
+        font-size: 1.2rem;
+        letter-spacing: 0.2rem;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .header {
+        padding: 1rem;
+      }
+
+      .logo-text {
+        display: none;
+      }
+
+      .chat-messages {
+        padding: 1rem;
+      }
+
+      .chat-input-container {
+        padding: 1rem;
+      }
+    }
+
+    /* iOS Safe Areas */
+    @supports (padding-top: env(safe-area-inset-top)) {
+      .header {
+        padding-top: calc(1rem + env(safe-area-inset-top));
+      }
+
+      .chat-input-container {
+        padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="offline-banner" id="offlineBanner">
+    📡 You're offline - Messages will sync when connection returns
+  </div>
+
+  <div class="app">
+    <!-- Header -->
+    <div class="header">
+      <div class="logo">
+        <div class="logo-icon">🔐</div>
+        <span class="logo-text">Secure Chat</span>
+      </div>
+      <div class="connection-badge">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusText">Disconnected</span>
+      </div>
+    </div>
+
+    <!-- Welcome Screen -->
+    <div id="welcomeScreen" class="welcome">
+      <div class="welcome-card">
+        <h1>Secure P2P Chat</h1>
+        <p>End-to-end encrypted messaging with no servers. Your messages stay on your device.</p>
+        
+        <div class="features">
+          <div class="feature">
+            <div class="feature-icon">🔐</div>
+            <div class="feature-text">E2E Encrypted</div>
+          </div>
+          <div class="feature">
+            <div class="feature-icon">🌐</div>
+            <div class="feature-text">No Servers</div>
+          </div>
+          <div class="feature">
+            <div class="feature-icon">💾</div>
+            <div class="feature-text">Local Storage</div>
+          </div>
+        </div>
+
+        <div class="action-buttons">
+          <button id="hostBtn" class="btn btn-primary">
+            <span>🏠</span>
+            <span>Create Room</span>
+          </button>
+          <button id="joinBtn" class="btn btn-secondary">
+            <span>🔗</span>
+            <span>Join Room</span>
+          </button>
+        </div>
+
+        <!-- Room History -->
+        <div id="roomHistory" class="room-history" style="display:none;">
+          <div class="history-title">Recent Rooms</div>
+          <div id="historyItems" class="history-items"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Host Setup -->
+    <div id="hostSetup" class="welcome" style="display:none;">
+      <div class="welcome-card">
+        <h2>Create Secure Room</h2>
+        <p>Share this room code with someone you trust</p>
+        
+        <div class="room-code-display" id="roomCode" onclick="copyRoomCode()">
+          Loading...
+        </div>
+        
+        <div class="input-group">
+          <label class="input-label">Set Encryption Password</label>
+          <input type="password" id="hostPassword" class="input-field" placeholder="Choose a strong password">
+        </div>
+        
+        <button id="hostStart" class="btn btn-primary" style="width: 100%;">
+          Start Secure Room
+        </button>
+        
+        <button onclick="backToWelcome()" class="btn btn-secondary" style="width: 100%; margin-top: 1rem;">
+          Back
+        </button>
+      </div>
+    </div>
+
+    <!-- Join Setup -->
+    <div id="joinSetup" class="welcome" style="display:none;">
+      <div class="welcome-card">
+        <h2>Join Secure Room</h2>
+        <p>Enter the room details shared with you</p>
+        
+        <div class="input-group">
+          <label class="input-label">Room Code</label>
+          <input type="text" id="joinRoomCode" class="input-field" placeholder="xxx-xxx-xxx">
+        </div>
+        
+        <div class="input-group">
+          <label class="input-label">Encryption Password</label>
+          <input type="password" id="joinPassword" class="input-field" placeholder="Enter shared password">
+        </div>
+        
+        <button id="joinStart" class="btn btn-primary" style="width: 100%;">
+          Join Room
+        </button>
+        
+        <button onclick="backToWelcome()" class="btn btn-secondary" style="width: 100%; margin-top: 1rem;">
+          Back
+        </button>
+      </div>
+    </div>
+
+    <!-- Chat Interface -->
+    <div id="chatInterface" class="chat-container" style="display:none;">
+      <div class="chat-header">
+        <div class="chat-room-info">
+          <span>🔐</span>
+          <div class="room-badge" id="currentRoom">xxx-xxx-xxx</div>
+        </div>
+        <button onclick="disconnect()" class="btn btn-secondary" style="padding: 0.5rem 1rem;">
+          Leave
+        </button>
+      </div>
+
+      <div id="chatMessages" class="chat-messages">
+        <!-- Messages will appear here -->
+      </div>
+
+      <div class="chat-input-container">
+        <div class="chat-input-wrapper">
+          <input type="text" id="messageInput" class="chat-input" placeholder="Type a secure message...">
+          <button id="sendBtn" class="send-btn">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Install Prompt -->
+  <div id="installPrompt" class="install-prompt">
+    <span>📱 Install for offline access</span>
+    <button id="installBtn" class="install-btn">Install</button>
+  </div>
+
+  <!-- Load PeerJS -->
+  <script src="https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js"></script>
+
+  <script>
+    // ============================================================
+    // SERVICE WORKER
+    // ============================================================
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js')
+        .then(reg => console.log('Service Worker registered:', reg))
+        .catch(err => console.warn('Service Worker registration failed:', err));
+    }
+
+    // ============================================================
+    // PWA INSTALL
+    // ============================================================
+    let deferredPrompt;
+    
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      console.log('Install prompt ready');
+      
+      // Show install prompt after 5 seconds
+      setTimeout(() => {
+        const prompt = document.getElementById('installPrompt');
+        if (prompt && deferredPrompt) {
+          prompt.classList.add('show');
+        }
+      }, 5000);
+    });
+
+    document.getElementById('installBtn')?.addEventListener('click', async () => {
+      const prompt = document.getElementById('installPrompt');
+      
+      if (!deferredPrompt) {
+        console.log('No install prompt available');
+        return;
+      }
+      
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      console.log('Install outcome:', outcome);
+      
+      deferredPrompt = null;
+      prompt.classList.remove('show');
+    });
+
+    // Detect if app is installed
+    window.addEventListener('appinstalled', () => {
+      console.log('PWA installed');
+      deferredPrompt = null;
+    });
+
+    // ============================================================
+    // STORAGE CLASS
+    // ============================================================
+    class Storage {
+      constructor() {
+        this.dbName = 'SecureChatDB';
+        this.db = null;
+        this.init();
+      }
+
+      async init() {
+        return new Promise((resolve) => {
+          const request = indexedDB.open(this.dbName, 1);
+          
+          request.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            
+            if (!db.objectStoreNames.contains('messages')) {
+              const messages = db.createObjectStore('messages', { 
+                keyPath: 'id', 
+                autoIncrement: true 
+              });
+              messages.createIndex('roomId', 'roomId');
+            }
+            
+            if (!db.objectStoreNames.contains('rooms')) {
+              db.createObjectStore('rooms', { keyPath: 'roomId' });
+            }
+          };
+          
+          request.onsuccess = () => {
+            this.db = request.result;
+            resolve();
+          };
+        });
+      }
+
+      async saveMessage(roomId, content, type) {
+        const tx = this.db.transaction(['messages'], 'readwrite');
+        return tx.objectStore('messages').add({
+          roomId,
+          content,
+          type,
+          timestamp: Date.now()
+        });
+      }
+
+      async getMessages(roomId) {
+        const tx = this.db.transaction(['messages'], 'readonly');
+        const index = tx.objectStore('messages').index('roomId');
+        
+        return new Promise((resolve) => {
+          const messages = [];
+          const request = index.openCursor(IDBKeyRange.only(roomId));
+          
+          request.onsuccess = (e) => {
+            const cursor = e.target.result;
+            if (cursor) {
+              messages.push(cursor.value);
+              cursor.continue();
+            } else {
+              resolve(messages.sort((a, b) => a.timestamp - b.timestamp));
+            }
+          };
+        });
+      }
+
+      async saveRoom(roomId) {
+        const tx = this.db.transaction(['rooms'], 'readwrite');
+        return tx.objectStore('rooms').put({
+          roomId,
+          lastUsed: Date.now()
+        });
+      }
+
+      async getRooms() {
+        const tx = this.db.transaction(['rooms'], 'readonly');
+        return new Promise((resolve) => {
+          const request = tx.objectStore('rooms').getAll();
+          request.onsuccess = () => {
+            resolve(request.result.sort((a, b) => b.lastUsed - a.lastUsed));
+          };
+        });
+      }
+    }
+
+    // ============================================================
+    // ENCRYPTION
+    // ============================================================
+    async function deriveKey(password) {
+      const encoder = new TextEncoder();
+      const keyMaterial = await crypto.subtle.importKey(
+        'raw',
+        encoder.encode(password),
+        'PBKDF2',
+        false,
+        ['deriveBits', 'deriveKey']
+      );
+
+      return crypto.subtle.deriveKey(
+        {
+          name: 'PBKDF2',
+          salt: encoder.encode('secure-chat-salt-v1'),
+          iterations: 100000,
+          hash: 'SHA-256'
+        },
+        keyMaterial,
+        { name: 'AES-GCM', length: 256 },
+        true,
+        ['encrypt', 'decrypt']
+      );
+    }
+
+    async function encrypt(text, key) {
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const encrypted = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv },
+        key,
+        new TextEncoder().encode(text)
+      );
+      
+      const combined = new Uint8Array(iv.length + encrypted.byteLength);
+      combined.set(iv);
+      combined.set(new Uint8Array(encrypted), iv.length);
+      return combined;
+    }
+
+    async function decrypt(data, key) {
+      const iv = data.slice(0, 12);
+      const ciphertext = data.slice(12);
+      
+      const decrypted = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv },
+        key,
+        ciphertext
+      );
+      
+      return new TextDecoder().decode(decrypted);
+    }
+
+    // ============================================================
+    // CHAT APP
+    // ============================================================
+    class SecureChat {
+      constructor() {
+        this.storage = new Storage();
+        this.peer = null;
+        this.connection = null;
+        this.key = null;
+        this.roomId = null;
+        
+        this.initEventListeners();
+        this.loadRoomHistory();
+        this.monitorConnection();
+        
+        // Request persistent storage
+        if (navigator.storage && navigator.storage.persist) {
+          navigator.storage.persist().then(granted => {
+            console.log('Persistent storage:', granted ? 'granted' : 'denied');
+          });
+        }
+      }
+
+      initEventListeners() {
+        document.getElementById('hostBtn').onclick = () => this.showHostSetup();
+        document.getElementById('joinBtn').onclick = () => this.showJoinSetup();
+        document.getElementById('hostStart').onclick = () => this.startHosting();
+        document.getElementById('joinStart').onclick = () => this.joinRoom();
+        document.getElementById('sendBtn').onclick = () => this.sendMessage();
+        
+        document.getElementById('messageInput').onkeypress = (e) => {
+          if (e.key === 'Enter') this.sendMessage();
+        };
+      }
+
+      monitorConnection() {
+        window.addEventListener('online', () => {
+          document.getElementById('offlineBanner').classList.remove('show');
+        });
+        
+        window.addEventListener('offline', () => {
+          document.getElementById('offlineBanner').classList.add('show');
+        });
+      }
+
+      async loadRoomHistory() {
+        const rooms = await this.storage.getRooms();
+        if (rooms.length === 0) return;
+        
+        const historyEl = document.getElementById('roomHistory');
+        const itemsEl = document.getElementById('historyItems');
+        
+        historyEl.style.display = 'block';
+        itemsEl.innerHTML = '';
+        
+        rooms.slice(0, 3).forEach(room => {
+          const item = document.createElement('div');
+          item.className = 'history-item';
+          item.innerHTML = `
+            <span class="history-room">${room.roomId}</span>
+            <span class="history-time">${new Date(room.lastUsed).toLocaleDateString()}</span>
+          `;
+          item.onclick = () => {
+            document.getElementById('joinRoomCode').value = room.roomId;
+            this.showJoinSetup();
+          };
+          itemsEl.appendChild(item);
+        });
+      }
+
+      generateRoomId() {
+        const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+        let result = '';
+        for (let i = 0; i < 3; i++) {
+          if (i > 0) result += '-';
+          for (let j = 0; j < 3; j++) {
+            result += chars[Math.floor(Math.random() * chars.length)];
+          }
+        }
+        return result;
+      }
+
+      showHostSetup() {
+        this.roomId = this.generateRoomId();
+        document.getElementById('roomCode').textContent = this.roomId;
+        document.getElementById('welcomeScreen').style.display = 'none';
+        document.getElementById('hostSetup').style.display = 'flex';
+      }
+
+      showJoinSetup() {
+        document.getElementById('welcomeScreen').style.display = 'none';
+        document.getElementById('joinSetup').style.display = 'flex';
+      }
+
+      async startHosting() {
+        const password = document.getElementById('hostPassword').value;
+        if (!password) {
+          alert('Please set a password');
+          return;
+        }
+
+        this.key = await deriveKey(password);
+        await this.storage.saveRoom(this.roomId);
+        
+        this.updateStatus('Connecting...', 'connecting');
+        
+        this.peer = new Peer(this.roomId, {
+          debug: 2,
+          config: {
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+          }
+        });
+
+        this.peer.on('open', () => {
+          this.addSystemMessage('Room created. Waiting for peer...');
+        });
+
+        this.peer.on('connection', (conn) => {
+          this.addSystemMessage('Peer is connecting...');
+          this.setupConnection(conn);
+        });
+        
+        this.peer.on('error', (err) => {
+          console.error('Peer error:', err);
+          this.addSystemMessage(`Error: ${err.type}`, 'error');
+        });
+      }
+
+      async joinRoom() {
+        this.roomId = document.getElementById('joinRoomCode').value;
+        const password = document.getElementById('joinPassword').value;
+        
+        if (!this.roomId || !password) {
+          alert('Please enter room code and password');
+          return;
+        }
+
+        this.key = await deriveKey(password);
+        await this.storage.saveRoom(this.roomId);
+        
+        this.updateStatus('Connecting...', 'connecting');
+        
+        const myId = this.generateRoomId();
+        this.peer = new Peer(myId, {
+          debug: 2,
+          config: {
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+          }
+        });
+
+        this.peer.on('open', () => {
+          const conn = this.peer.connect(this.roomId);
+          this.setupConnection(conn);
+        });
+        
+        this.peer.on('error', (err) => {
+          console.error('Peer error:', err);
+          this.addSystemMessage(`Failed to connect: ${err.type}`, 'error');
+        });
+      }
+
+      setupConnection(conn) {
+        this.connection = conn;
+        
+        conn.on('open', async () => {
+          this.updateStatus('Connected', 'connected');
+          this.addSystemMessage('✅ Secure connection established!');
+          this.showChat();
+          
+          const messages = await this.storage.getMessages(this.roomId);
+          messages.forEach(msg => {
+            this.displayMessage(msg.content, msg.type, false);
+          });
+        });
+
+        conn.on('data', async (data) => {
+          try {
+            const decrypted = await decrypt(new Uint8Array(data), this.key);
+            this.displayMessage(decrypted, 'them');
+            await this.storage.saveMessage(this.roomId, decrypted, 'them');
+          } catch (err) {
+            this.addSystemMessage('Failed to decrypt message');
+          }
+        });
+
+        conn.on('close', () => {
+          this.updateStatus('Disconnected', '');
+          this.addSystemMessage('Connection closed');
+          setTimeout(() => this.disconnect(), 2000);
+        });
+        
+        conn.on('error', (err) => {
+          console.error('Connection error:', err);
+          this.addSystemMessage('Connection error occurred');
+        });
+      }
+
+      showChat() {
+        document.getElementById('hostSetup').style.display = 'none';
+        document.getElementById('joinSetup').style.display = 'none';
+        document.getElementById('chatInterface').style.display = 'flex';
+        document.getElementById('currentRoom').textContent = this.roomId;
+        document.getElementById('messageInput').focus();
+      }
+
+      async sendMessage() {
+        const input = document.getElementById('messageInput');
+        const text = input.value.trim();
+        if (!text || !this.connection) return;
+        
+        input.value = '';
+        this.displayMessage(text, 'me');
+        
+        await this.storage.saveMessage(this.roomId, text, 'me');
+        
+        try {
+          const encrypted = await encrypt(text, this.key);
+          this.connection.send(encrypted);
+        } catch (err) {
+          console.error('Send error:', err);
+          this.addSystemMessage('Failed to send message');
+        }
+      }
+
+      displayMessage(text, type, animate = true) {
+        const container = document.getElementById('chatMessages');
+        
+        const message = document.createElement('div');
+        message.className = `message ${type}`;
+        if (!animate) message.style.animation = 'none';
+        
+        const content = document.createElement('div');
+        content.className = 'message-content';
+        
+        const textEl = document.createElement('div');
+        textEl.className = 'message-text';
+        textEl.textContent = text;
+        
+        const timeEl = document.createElement('div');
+        timeEl.className = 'message-time';
+        timeEl.textContent = new Date().toLocaleTimeString([], { 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        });
+        
+        content.appendChild(textEl);
+        content.appendChild(timeEl);
+        message.appendChild(content);
+        
+        container.appendChild(message);
+        container.scrollTop = container.scrollHeight;
+      }
+
+      addSystemMessage(text) {
+        const container = document.getElementById('chatMessages');
+        const message = document.createElement('div');
+        message.className = 'system-message';
+        message.textContent = text;
+        container.appendChild(message);
+        container.scrollTop = container.scrollHeight;
+      }
+
+      updateStatus(text, status) {
+        document.getElementById('statusText').textContent = text;
+        const dot = document.getElementById('statusDot');
+        dot.className = 'status-dot';
+        if (status) dot.classList.add(status);
+      }
+
+      disconnect() {
+        if (this.connection) this.connection.close();
+        if (this.peer) this.peer.destroy();
+        
+        this.connection = null;
+        this.peer = null;
+        this.key = null;
+        
+        document.getElementById('chatInterface').style.display = 'none';
+        document.getElementById('welcomeScreen').style.display = 'flex';
+        document.getElementById('chatMessages').innerHTML = '';
+        
+        this.loadRoomHistory();
+      }
+    }
+
+    // Global functions
+    function backToWelcome() {
+      document.getElementById('hostSetup').style.display = 'none';
+      document.getElementById('joinSetup').style.display = 'none';
+      document.getElementById('welcomeScreen').style.display = 'flex';
+    }
+
+    function copyRoomCode() {
+      const code = document.getElementById('roomCode').textContent;
+      navigator.clipboard.writeText(code).then(() => {
+        const el = document.getElementById('roomCode');
+        const original = el.textContent;
+        el.textContent = '✅ Copied!';
+        setTimeout(() => {
+          el.textContent = original;
+        }, 1500);
+      });
+    }
+
+    function disconnect() {
+      if (window.app) {
+        window.app.disconnect();
+      }
+    }
+
+    // Initialize app
+    window.app = new SecureChat();
+  </script>
+</body>
+</html>
