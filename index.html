@@ -984,9 +984,18 @@
       }
 
       showChat() {
+        console.log('Showing chat interface for room:', this.roomId);
+
+        document.getElementById('welcomeScreen').classList.remove('active');
+        document.getElementById('hostScreen').classList.remove('active');
+        document.getElementById('joinScreen').classList.remove('active');
+        document.getElementById('chatScreen').classList.add('active');
+
         document.getElementById('currentRoom').textContent = this.roomId;
-        this.showScreen('chatScreen');
-        document.getElementById('messageInput').focus();
+
+        setTimeout(() => {
+          document.getElementById('messageInput').focus();
+        }, 100);
       }
 
       // Storage
@@ -1143,12 +1152,13 @@
         this.isHost = true;
         this.cryptoKey = await this.deriveKey(password);
         this.updateStatus('Creating room...', 'connecting');
-        
+
         // Generate and display the share link
         const shareLink = this.generateShareLink(this.roomId, password);
         document.getElementById('shareLink').textContent = shareLink;
         document.getElementById('shareSection').style.display = 'block';
-        
+        this.showChat();
+
         this.initPeer(this.roomId);
       }
 
@@ -1189,7 +1199,6 @@
           console.log('Connected to signaling server with ID:', peerId);
 
           if (this.isHost) {
-            this.showChat();
             this.updateStatus('Waiting for peer...', 'connecting');
             this.addSystemMessage(`Room created: ${this.roomId}`);
             this.addSystemMessage('Waiting for someone to join...');
@@ -1214,13 +1223,24 @@
           console.error('Peer error:', err);
 
           if (err.type === 'peer-unavailable') {
-            this.addSystemMessage('❌ Room not found. Make sure the room code is correct.');
-            this.updateStatus('Error', '');
-            setTimeout(() => this.showJoin(), 2000);
+            if (!this.isHost) {
+              this.addSystemMessage('❌ Room not found. Make sure the room code is correct.');
+              this.updateStatus('Error', '');
+              setTimeout(() => this.showJoin(), 2000);
+            }
           } else if (err.type === 'unavailable-id') {
             if (this.isHost) {
               this.roomId = this.generateRoomId();
               document.getElementById('roomCode').textContent = this.roomId;
+              document.getElementById('currentRoom').textContent = this.roomId;
+
+              const password = document.getElementById('hostPassword').value;
+              if (password) {
+                const shareLink = this.generateShareLink(this.roomId, password);
+                document.getElementById('shareLink').textContent = shareLink;
+              }
+
+              this.addSystemMessage(`Room ID was taken, new room: ${this.roomId}`);
               setTimeout(() => this.initPeer(this.roomId), 1000);
             }
           } else {
