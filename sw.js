@@ -1,10 +1,8 @@
-const CACHE_NAME = 'secure-chat-v1';
+const CACHE_NAME = 'secure-chat-v2';
 const urlsToCache = [
   './',
   './index.html',
   './manifest.json',
-  './icon-192.png',
-  './icon-512.png',
   'https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js'
 ];
 
