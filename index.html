@@ -1023,6 +1023,18 @@
         }
       }
 
+      async persistRoom() {
+        if (!this.roomId || typeof this.storage?.saveRoom !== 'function') {
+          return;
+        }
+
+        try {
+          await this.storage.saveRoom(this.roomId);
+        } catch (error) {
+          console.warn('Failed to save room history.', error);
+        }
+      }
+
       quickJoin(roomId) {
         document.getElementById('joinCode').value = roomId;
         this.showJoin();
@@ -1182,11 +1194,7 @@
             this.addSystemMessage(`Room created: ${this.roomId}`);
             this.addSystemMessage('Waiting for someone to join...');
 
-            try {
-              this.storage?.saveRoom?.(this.roomId);
-            } catch (error) {
-              console.warn('Failed to save room history.', error);
-            }
+            await this.persistRoom();
           } else {
             const conn = this.peer.connect(this.roomId);
             this.setupConnection(conn);
@@ -1197,13 +1205,14 @@
           this.peer.on('connection', (conn) => {
             console.log('Peer connecting');
             this.addSystemMessage('Peer is connecting...');
+            this.updateStatus('Peer connecting...', 'connecting');
             this.setupConnection(conn);
           });
         }
 
         this.peer.on('error', (err) => {
           console.error('Peer error:', err);
-          
+
           if (err.type === 'peer-unavailable') {
             this.addSystemMessage('❌ Room not found. Make sure the room code is correct.');
             this.updateStatus('Error', '');
@@ -1239,11 +1248,7 @@
             this.showChat();
           }
 
-          try {
-            this.storage?.saveRoom?.(this.roomId);
-          } catch (error) {
-            console.warn('Failed to save room history.', error);
-          }
+          await this.persistRoom();
 
           if (typeof this.storage?.getMessages === 'function') {
             try {
