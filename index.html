@@ -114,6 +114,13 @@
       font-size: 1.2rem;
     }
 
+    .connection-area {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 0.5rem;
+    }
+
     .connection-badge {
       padding: 0.5rem 1rem;
       background: var(--bg-tertiary);
@@ -131,6 +138,37 @@
       background: var(--text-secondary);
       border-radius: 50%;
       animation: pulse 2s infinite;
+    }
+
+    .fingerprint {
+      display: none;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 0.25rem;
+      background: rgba(0, 0, 0, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 12px;
+      padding: 0.5rem 0.75rem;
+      max-width: 240px;
+      box-shadow: var(--shadow);
+    }
+
+    .fingerprint.active {
+      display: flex;
+    }
+
+    .fingerprint-label {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .fingerprint-code {
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+      font-size: 0.875rem;
+      color: var(--text-primary);
+      text-align: right;
     }
 
     .status-dot.connected {
@@ -361,6 +399,13 @@
       border: 1px solid rgba(0, 102, 255, 0.3);
     }
 
+    .share-note {
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+      margin-bottom: 0.75rem;
+      line-height: 1.4;
+    }
+
     .share-link {
       background: var(--bg-primary);
       padding: 1rem;
@@ -374,6 +419,31 @@
 
     .share-link:hover {
       background: var(--bg-secondary);
+    }
+
+    .salt-section {
+      margin-top: 1rem;
+      padding: 1rem;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 12px;
+      border: 1px dashed rgba(0, 102, 255, 0.4);
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .salt-label {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .input-hint {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      margin-top: 0.5rem;
+      line-height: 1.4;
     }
 
     .simple-setup {
@@ -956,6 +1026,19 @@
         justify-content: flex-start;
         gap: 0.5rem;
       }
+
+      .connection-area {
+        align-items: stretch;
+        width: 100%;
+      }
+
+      .fingerprint {
+        align-items: flex-start;
+      }
+
+      .fingerprint-code {
+        text-align: left;
+      }
     }
 
     @media (max-width: 480px) {
@@ -1019,9 +1102,15 @@
         <div class="logo-icon">🔐</div>
         <span class="logo-text">Secure Chat</span>
       </div>
-      <div class="connection-badge">
-        <span class="status-dot" id="statusDot"></span>
-        <span id="statusText">Disconnected</span>
+      <div class="connection-area">
+        <div class="connection-badge">
+          <span class="status-dot" id="statusDot"></span>
+          <span id="statusText">Disconnected</span>
+        </div>
+        <div class="fingerprint" id="fingerprintDisplay">
+          <span class="fingerprint-label">Verify Connection</span>
+          <span class="fingerprint-code" id="fingerprintCode">Waiting for secure connection…</span>
+        </div>
       </div>
     </div>
 
@@ -1088,11 +1177,20 @@
           </button>
           
           <div id="shareSection" class="share-section" style="display: none;">
-            <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 0.75rem;">📤 Share this link with others:</p>
+            <p class="share-note">📤 Share this invite link with your guest. Send the password using a different channel.</p>
             <div class="share-link" id="shareLink" onclick="app.copyShareLink()">
               Generating link...
             </div>
             <button class="btn btn-primary" style="width: 100%; margin-bottom: 1rem;" onclick="app.copyShareLink()">📋 Copy Link</button>
+
+            <div class="salt-section">
+              <div class="salt-label">Room Salt (safe to share)</div>
+              <div class="share-link" id="roomSaltDisplay" onclick="app.copyRoomSalt()">
+                Generating salt...
+              </div>
+              <div class="input-hint">The salt is also included in the invite link for convenience.</div>
+              <button class="btn btn-secondary" style="width: 100%;" onclick="app.copyRoomSalt()">📋 Copy Salt</button>
+            </div>
 
             <div class="simple-setup">
               <label class="input-label" for="simpleEmail">Simple setup (optional)</label>
@@ -1118,13 +1216,19 @@
           
           <div class="input-group">
             <label class="input-label">Room Code</label>
-            <input type="text" id="joinCode" class="input-field" placeholder="xxx-xxx-xxx">
+            <input type="text" id="joinCode" class="input-field" placeholder="Paste the shared room code">
           </div>
-          
+
           <div class="input-group">
             <label class="input-label">Encryption Password</label>
             <input type="password" id="joinPassword" class="input-field" placeholder="Enter shared password">
-            <div id="passwordHint" style="color: var(--accent); font-size: 0.875rem; margin-top: 0.5rem; display: none;"></div>
+            <div class="input-hint">Verify this password over a different channel.</div>
+          </div>
+
+          <div class="input-group">
+            <label class="input-label">Room Salt</label>
+            <input type="text" id="joinSalt" class="input-field" placeholder="Paste the room salt or open the invite link">
+            <div class="input-hint">The invite link fills this automatically. Salt can be shared publicly.</div>
           </div>
           
           <button class="btn btn-primary" style="width: 100%;" onclick="app.startJoin()">
@@ -1687,6 +1791,9 @@
         this.conn = null;
         this.roomId = null;
         this.cryptoKey = null;
+        this.roomSalt = null;
+        this.roomSaltBase64 = '';
+        this.pendingRoomSalt = null;
         this.isHost = false;
         this.currentShareLink = '';
         this.localUserId = generateId('user-');
@@ -1694,6 +1801,9 @@
         this.showEncrypted = false;
         this.messageLog = [];
         this.lastEncryptedHex = '';
+        this.outgoingMessageNumber = 1;
+        this.expectedIncomingMessageNumber = 1;
+        this.connectionFingerprint = '';
 
         this.initStorage();
         this.loadRoomHistory();
@@ -1702,6 +1812,7 @@
         this.initSimpleSetup();
         this.updateStatus('Disconnected', '');
         this.setWaitingBanner(false, '');
+        this.updateFingerprintDisplay(null);
       }
 
       initEventListeners() {
@@ -1799,16 +1910,25 @@
           return;
         }
 
+        if (!password) {
+          this.updateSimpleShareStatus('Set an encryption password before sharing the invite.', true);
+          return;
+        }
+
         const email = this.simpleEmailInput?.value.trim();
         if (!this.isValidEmail(email)) {
           this.updateSimpleShareStatus('Enter a valid email or leave blank to use the share menu.', true);
           return;
         }
         this.storeInviteEmail(email || '');
+        const salt = this.roomSaltBase64 || '';
+        const roomCode = this.roomId || 'Check the app for the current room code';
         const payload = `Join my secure room on Secure Chat.
 
-Link: ${link}
-Password: ${password || 'Share separately'}
+Invite link: ${link}
+Room code: ${roomCode}
+Room salt: ${salt || 'Retrieve this from the app'}
+Password: [share securely via a different channel]
 `;
 
         this.updateSimpleShareStatus('');
@@ -1842,34 +1962,48 @@ Password: ${password || 'Share separately'}
       checkForSharedLink() {
         const params = new URLSearchParams(window.location.search);
         const room = params.get('room');
-        const key = params.get('key');
-        
-        if (room && key) {
-          document.getElementById('joinCode').value = room;
-          
-          try {
-            const decoded = atob(key);
-            const hint = document.getElementById('passwordHint');
-            hint.textContent = `Password hint: ${decoded}`;
-            hint.style.display = 'block';
-          } catch(e) {
-            // Invalid key
+        const saltParam = params.get('salt');
+
+        if (room) {
+          const joinCode = document.getElementById('joinCode');
+          if (joinCode) {
+            joinCode.value = room;
           }
-          
+        }
+
+        if (saltParam) {
+          const saltBytes = this.base64ToBytes(saltParam);
+          if (saltBytes) {
+            this.pendingRoomSalt = saltBytes;
+            this.roomSaltBase64 = this.bytesToBase64(saltBytes);
+            const joinSalt = document.getElementById('joinSalt');
+            if (joinSalt) {
+              joinSalt.value = this.roomSaltBase64;
+            }
+          }
+        }
+
+        if (room || saltParam) {
           this.showJoin();
           window.history.replaceState({}, document.title, window.location.pathname);
         }
       }
 
       // Generate shareable link
-      generateShareLink(roomId, password) {
+      generateShareLink(roomId) {
         const baseUrl = window.location.origin + window.location.pathname;
-        const hint = password.length > 2 
-          ? `${password[0]}***${password[password.length-1]} (${password.length} chars)`
-          : `${password.length} characters`;
-        const encodedHint = btoa(hint);
-        
-        return `${baseUrl}?room=${encodeURIComponent(roomId)}&key=${encodeURIComponent(encodedHint)}`;
+        if (!roomId) {
+          return baseUrl;
+        }
+
+        const params = new URLSearchParams();
+        params.set('room', roomId);
+        if (this.roomSaltBase64) {
+          params.set('salt', this.roomSaltBase64);
+        }
+
+        const query = params.toString();
+        return query ? `${baseUrl}?${query}` : baseUrl;
       }
 
       copyShareLink(targetId = 'shareLink') {
@@ -1946,6 +2080,11 @@ Password: ${password || 'Share separately'}
 
       showHost() {
         this.roomId = this.generateRoomId();
+        this.generateRoomSalt();
+        this.resetMessageCounters();
+        this.pendingRoomSalt = null;
+        this.connectionFingerprint = '';
+        this.updateFingerprintDisplay(null);
         document.getElementById('roomCode').textContent = this.roomId;
         document.getElementById('shareSection').style.display = 'none';
         const shareLinkEl = document.getElementById('shareLink');
@@ -1953,12 +2092,21 @@ Password: ${password || 'Share separately'}
           shareLinkEl.textContent = 'Generating link...';
           delete shareLinkEl.dataset.link;
         }
+        this.updateRoomSaltDisplay();
         this.currentShareLink = '';
         this.setWaitingBanner(false, '');
         this.showScreen('hostScreen');
       }
 
       showJoin() {
+        if (!this.pendingRoomSalt) {
+          const joinSalt = document.getElementById('joinSalt');
+          if (joinSalt) {
+            joinSalt.value = '';
+          }
+        }
+        this.updateFingerprintDisplay(null);
+        this.resetMessageCounters();
         this.showScreen('joinScreen');
       }
 
@@ -1973,7 +2121,7 @@ Password: ${password || 'Share separately'}
         document.getElementById('currentRoom').textContent = this.roomId;
 
         if (this.isHost && this.currentShareLink) {
-          this.setWaitingBanner(true, this.currentShareLink);
+          this.setWaitingBanner(true, this.currentShareLink, 'Share this link and send the password separately to your guest.');
         } else {
           this.setWaitingBanner(false);
         }
@@ -2043,24 +2191,134 @@ Password: ${password || 'Share separately'}
       }
 
       // Utilities
-      generateRoomId() {
-        const segments = [];
-        const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-        for (let i = 0; i < 3; i++) {
-          let segment = '';
-          for (let j = 0; j < 3; j++) {
-            segment += chars[Math.floor(Math.random() * chars.length)];
-          }
-          segments.push(segment);
+      generateRoomSalt() {
+        if (!(typeof crypto !== 'undefined' && crypto.getRandomValues)) {
+          throw new Error('Secure random generator unavailable');
         }
-        return segments.join('-');
+
+        const salt = crypto.getRandomValues(new Uint8Array(16));
+        this.roomSalt = salt;
+        this.roomSaltBase64 = this.bytesToBase64(salt);
+        this.updateRoomSaltDisplay();
+        return salt;
+      }
+
+      updateRoomSaltDisplay() {
+        const saltDisplay = document.getElementById('roomSaltDisplay');
+        if (saltDisplay) {
+          if (this.roomSaltBase64) {
+            saltDisplay.textContent = this.roomSaltBase64;
+            saltDisplay.dataset.salt = this.roomSaltBase64;
+          } else {
+            saltDisplay.textContent = 'Generating salt...';
+            delete saltDisplay.dataset.salt;
+          }
+        }
+      }
+
+      copyRoomSalt() {
+        if (!this.roomSaltBase64 || typeof navigator?.clipboard?.writeText !== 'function') {
+          return;
+        }
+
+        const display = document.getElementById('roomSaltDisplay');
+        navigator.clipboard.writeText(this.roomSaltBase64).then(() => {
+          if (!display) {
+            return;
+          }
+          const original = display.textContent;
+          display.textContent = '✅ Salt copied!';
+          setTimeout(() => {
+            display.textContent = this.roomSaltBase64 || original;
+          }, 2000);
+        });
+      }
+
+      resetMessageCounters() {
+        this.outgoingMessageNumber = 1;
+        this.expectedIncomingMessageNumber = 1;
+      }
+
+      bytesToBase64(bytes) {
+        if (!(bytes instanceof Uint8Array)) {
+          return '';
+        }
+        let binary = '';
+        bytes.forEach((b) => {
+          binary += String.fromCharCode(b);
+        });
+        return btoa(binary);
+      }
+
+      base64ToBytes(input) {
+        if (typeof input !== 'string' || !input.trim()) {
+          return null;
+        }
+        let normalized = input.trim().replace(/-/g, '+').replace(/_/g, '/');
+        while (normalized.length % 4 !== 0) {
+          normalized += '=';
+        }
+        try {
+          const binary = atob(normalized);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+          }
+          return bytes;
+        } catch (error) {
+          return null;
+        }
+      }
+
+      formatFingerprint(bytes) {
+        if (!(bytes instanceof Uint8Array) || bytes.length === 0) {
+          return '';
+        }
+
+        const colors = ['Amber', 'Azure', 'Blue', 'Cobalt', 'Crimson', 'Emerald', 'Golden', 'Indigo', 'Ivory', 'Jade', 'Magenta', 'Onyx', 'Ruby', 'Saffron', 'Scarlet', 'Silver', 'Teal', 'Umber', 'Violet', 'Copper'];
+        const animals = ['Falcon', 'Tiger', 'Wolf', 'Otter', 'Eagle', 'Panther', 'Fox', 'Hawk', 'Lynx', 'Panda', 'Raven', 'Shark', 'Bison', 'Heron', 'Dragonfly', 'Whale', 'Kestrel', 'Badger', 'Coyote', 'Orca'];
+        const numbers = ['Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen'];
+        const places = ['Harbor', 'Mountain', 'Forest', 'River', 'Canyon', 'Desert', 'Valley', 'Grove', 'Summit', 'Lagoon', 'Prairie', 'Temple', 'Island', 'Village', 'Tundra', 'Meadow', 'Fjord', 'Citadel', 'Bridge', 'Monolith'];
+
+        const color = colors[bytes[0] % colors.length];
+        const animal = animals[bytes[1] % animals.length];
+        const number = numbers[bytes[2] % numbers.length];
+        const place = places[bytes[3] % places.length];
+
+        return `🔐 ${color}-${animal}-${number}-${place}`;
+      }
+
+      updateFingerprintDisplay(code) {
+        const container = document.getElementById('fingerprintDisplay');
+        const codeEl = document.getElementById('fingerprintCode');
+        if (!container || !codeEl) {
+          return;
+        }
+
+        if (typeof code === 'string' && code.trim()) {
+          codeEl.textContent = code;
+          container.classList.add('active');
+        } else {
+          codeEl.textContent = 'Waiting for secure connection…';
+          container.classList.remove('active');
+        }
+      }
+
+      generateRoomId() {
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+          return crypto.randomUUID();
+        }
+        return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
       }
 
       copyRoomCode() {
         const code = document.getElementById('roomCode').textContent;
-        if (code && code !== 'Loading...') {
+        if (code && code !== 'Loading...' && typeof navigator?.clipboard?.writeText === 'function') {
           navigator.clipboard.writeText(code).then(() => {
             const elem = document.getElementById('roomCode');
+            if (!elem) {
+              return;
+            }
             const original = elem.textContent;
             elem.textContent = '✅ Copied!';
             setTimeout(() => {
@@ -2078,28 +2336,44 @@ Password: ${password || 'Share separately'}
       }
 
       // Crypto
-      async deriveKey(password) {
+      async deriveKey(password, salt) {
+        if (!password || !(salt instanceof Uint8Array)) {
+          throw new Error('Missing password or room salt');
+        }
+
         const encoder = new TextEncoder();
         const keyMaterial = await crypto.subtle.importKey(
           'raw',
           encoder.encode(password),
           'PBKDF2',
           false,
-          ['deriveBits', 'deriveKey']
+          ['deriveBits']
         );
 
-        return crypto.subtle.deriveKey(
-          {
-            name: 'PBKDF2',
-            salt: encoder.encode('secure-p2p-chat-salt-v1'),
-            iterations: 100000,
-            hash: 'SHA-256'
-          },
-          keyMaterial,
+        const params = {
+          name: 'PBKDF2',
+          salt,
+          iterations: 100000,
+          hash: 'SHA-256'
+        };
+
+        const derivedBits = await crypto.subtle.deriveBits(params, keyMaterial, 512);
+        const bytes = new Uint8Array(derivedBits);
+        const keyBytes = bytes.slice(0, 32);
+        const fingerprintBytes = bytes.slice(32, 48);
+
+        const cryptoKey = await crypto.subtle.importKey(
+          'raw',
+          keyBytes,
           { name: 'AES-GCM', length: 256 },
           false,
           ['encrypt', 'decrypt']
         );
+
+        return {
+          key: cryptoKey,
+          fingerprint: this.formatFingerprint(fingerprintBytes)
+        };
       }
 
       async encrypt(text) {
@@ -2143,11 +2417,36 @@ Password: ${password || 'Share separately'}
         }
 
         this.isHost = true;
-        this.cryptoKey = await this.deriveKey(password);
+        if (!this.roomId) {
+          this.roomId = this.generateRoomId();
+        }
+        try {
+          if (!(this.roomSalt instanceof Uint8Array)) {
+            this.generateRoomSalt();
+          }
+        } catch (error) {
+          console.error('Failed to prepare room salt.', error);
+          alert('Unable to generate a secure room salt. Please reload the page and try again.');
+          return;
+        }
+
+        let keyData;
+        try {
+          keyData = await this.deriveKey(password, this.roomSalt);
+        } catch (error) {
+          console.error('Failed to derive encryption key.', error);
+          alert('Unable to derive the encryption key. Please try again with a different password.');
+          return;
+        }
+
+        this.cryptoKey = keyData.key;
+        this.connectionFingerprint = keyData.fingerprint;
+        this.resetMessageCounters();
+        this.updateFingerprintDisplay(null);
         this.updateStatus('Creating room...', 'connecting');
 
         // Generate and display the share link
-        const shareLink = this.generateShareLink(this.roomId, password);
+        const shareLink = this.generateShareLink(this.roomId);
         const shareLinkEl = document.getElementById('shareLink');
         if (shareLinkEl) {
           shareLinkEl.textContent = shareLink;
@@ -2156,7 +2455,7 @@ Password: ${password || 'Share separately'}
         document.getElementById('shareSection').style.display = 'block';
         this.currentShareLink = shareLink;
         this.updateSimpleShareStatus('');
-        this.setWaitingBanner(true, shareLink, 'Share this link with someone to start chatting.');
+        this.setWaitingBanner(true, shareLink, 'Share this link and send the password separately to your guest.');
         this.showChat();
 
         this.initPeer(this.roomId);
@@ -2165,16 +2464,50 @@ Password: ${password || 'Share separately'}
       async startJoin() {
         const roomId = document.getElementById('joinCode').value.trim();
         const password = document.getElementById('joinPassword').value;
-        
+        const saltInput = document.getElementById('joinSalt');
+        const manualSalt = saltInput?.value.trim();
+
         if (!roomId || !password) {
-          alert('Please enter room code and password');
+          alert('Please enter the room code and password.');
+          return;
+        }
+
+        let saltBytes = null;
+        if (manualSalt) {
+          saltBytes = this.base64ToBytes(manualSalt);
+          if (!saltBytes) {
+            alert('The room salt you entered is invalid. Please paste the exact salt or use the invite link.');
+            return;
+          }
+        } else if (this.pendingRoomSalt instanceof Uint8Array) {
+          saltBytes = this.pendingRoomSalt;
+        }
+
+        if (!(saltBytes instanceof Uint8Array)) {
+          alert('Room salt is required. Open the invite link or paste the salt shared with you.');
           return;
         }
 
         this.roomId = roomId;
         this.isHost = false;
         this.currentShareLink = '';
-        this.cryptoKey = await this.deriveKey(password);
+        this.roomSalt = saltBytes;
+        this.roomSaltBase64 = this.bytesToBase64(saltBytes);
+
+        let keyData;
+        try {
+          keyData = await this.deriveKey(password, this.roomSalt);
+        } catch (error) {
+          console.error('Failed to derive encryption key for joiner.', error);
+          alert('Unable to derive the encryption key. Double-check the password and salt.');
+          return;
+        }
+
+        this.pendingRoomSalt = null;
+        this.cryptoKey = keyData.key;
+        this.connectionFingerprint = keyData.fingerprint;
+        this.resetMessageCounters();
+        this.updateFingerprintDisplay(null);
         this.updateStatus('Connecting...', 'connecting');
         this.setWaitingBanner(false, '');
 
@@ -2223,7 +2556,7 @@ Password: ${password || 'Share separately'}
           });
         }
 
-        this.peer.on('error', (err) => {
+        this.peer.on('error', async (err) => {
           console.error('Peer error:', err);
 
           if (err.type === 'peer-unavailable') {
@@ -2240,14 +2573,28 @@ Password: ${password || 'Share separately'}
 
               const password = document.getElementById('hostPassword').value;
               if (password) {
-                const shareLink = this.generateShareLink(this.roomId, password);
+                try {
+                  this.generateRoomSalt();
+                  const keyData = await this.deriveKey(password, this.roomSalt);
+                  this.cryptoKey = keyData.key;
+                  this.connectionFingerprint = keyData.fingerprint;
+                  this.resetMessageCounters();
+                  this.updateFingerprintDisplay(null);
+                } catch (error) {
+                  console.error('Failed to refresh room secrets after ID collision.', error);
+                  this.addSystemMessage('⚠️ Unable to refresh room security details. Please recreate the room.');
+                  this.disconnect();
+                  return;
+                }
+
+                const shareLink = this.generateShareLink(this.roomId);
                 const shareLinkEl = document.getElementById('shareLink');
                 if (shareLinkEl) {
                   shareLinkEl.textContent = shareLink;
                   shareLinkEl.dataset.link = shareLink;
                 }
                 this.currentShareLink = shareLink;
-                this.setWaitingBanner(true, shareLink, 'Share this link with someone to start chatting.');
+                this.setWaitingBanner(true, shareLink, 'Share this link and send the password separately to your guest.');
               } else {
                 this.currentShareLink = '';
                 this.setWaitingBanner(false, '');
@@ -2277,6 +2624,12 @@ Password: ${password || 'Share separately'}
           console.log('Peer connection established');
           this.updateStatus('Connected', 'connected');
           this.addSystemMessage('✅ Secure connection established!');
+          if (this.connectionFingerprint) {
+            this.updateFingerprintDisplay(this.connectionFingerprint);
+            this.addSystemMessage(`🔒 Verify code: ${this.connectionFingerprint}`);
+          } else {
+            this.updateFingerprintDisplay(null);
+          }
 
           if (!this.isHost) {
             this.showChat();
@@ -2306,24 +2659,62 @@ Password: ${password || 'Share separately'}
             .map(b => b.toString(16).padStart(2, '0'))
             .join('');
           const decrypted = await this.decrypt(payload);
-          if (decrypted) {
-            this.displayMessage(decrypted, 'them', Date.now(), payload);
-            if (typeof this.storage?.recordMessage === 'function' && this.roomId) {
-              this.storage.recordMessage({
-                roomId: this.roomId,
-                text: decrypted,
-                type: 'them',
-                actorId: this.remoteUserId || 'peer',
-                userId: this.remoteUserId || 'peer'
-              }).catch(error => console.warn('Failed to record incoming message.', error));
-            }
-          } else {
+          if (!decrypted) {
             this.addSystemMessage('⚠️ Failed to decrypt message');
+            return;
+          }
+
+          let parsed;
+          try {
+            parsed = JSON.parse(decrypted);
+          } catch (error) {
+            console.warn('Invalid message payload received.', error);
+            this.addSystemMessage('⚠️ Message integrity check failed. Ignoring message.');
+            return;
+          }
+
+          const sequence = Number(parsed?.n);
+          const text = typeof parsed?.text === 'string' ? parsed.text : '';
+          const timestamp = typeof parsed?.sentAt === 'number' ? parsed.sentAt : Date.now();
+
+          if (!Number.isInteger(sequence) || sequence < 1) {
+            this.addSystemMessage('⚠️ Message integrity check failed. Ignoring message.');
+            return;
+          }
+
+          if (sequence < this.expectedIncomingMessageNumber) {
+            this.addSystemMessage('⚠️ Duplicate message ignored.');
+            return;
+          }
+
+          if (sequence > this.expectedIncomingMessageNumber) {
+            this.addSystemMessage('⚠️ Message out of order or replayed. Discarded.');
+            return;
+          }
+
+          if (!text) {
+            this.expectedIncomingMessageNumber += 1;
+            this.addSystemMessage('⚠️ Empty or invalid message received.');
+            return;
+          }
+
+          this.expectedIncomingMessageNumber += 1;
+          this.displayMessage(text, 'them', timestamp, payload);
+          if (typeof this.storage?.recordMessage === 'function' && this.roomId) {
+            this.storage.recordMessage({
+              roomId: this.roomId,
+              text,
+              type: 'them',
+              actorId: this.remoteUserId || 'peer',
+              userId: this.remoteUserId || 'peer'
+            }).catch(error => console.warn('Failed to record incoming message.', error));
           }
         });
 
         activeConn.on('close', () => {
           this.remoteUserId = null;
+          this.updateFingerprintDisplay(null);
+          this.resetMessageCounters();
           if (this.isHost && this.currentShareLink) {
             this.updateStatus('Waiting for peer...', 'connecting');
             this.addSystemMessage('👋 Peer disconnected');
@@ -2336,6 +2727,7 @@ Password: ${password || 'Share separately'}
 
         activeConn.on('error', (err) => {
           console.error('Connection error:', err);
+          this.updateFingerprintDisplay(null);
           this.addSystemMessage('⚠️ Connection error occurred');
         });
       }
@@ -2352,9 +2744,15 @@ Password: ${password || 'Share separately'}
         input.value = '';
         const timestamp = Date.now();
 
+        const payload = {
+          n: this.outgoingMessageNumber,
+          text,
+          sentAt: timestamp
+        };
+
         let encrypted;
         try {
-          encrypted = await this.encrypt(text);
+          encrypted = await this.encrypt(JSON.stringify(payload));
         } catch (error) {
           console.error('Failed to encrypt message.', error);
           this.addSystemMessage('⚠️ Unable to encrypt message');
@@ -2365,6 +2763,7 @@ Password: ${password || 'Share separately'}
           .map(b => b.toString(16).padStart(2, '0'))
           .join('');
 
+        this.outgoingMessageNumber += 1;
         this.displayMessage(text, 'me', timestamp, encrypted);
 
         if (typeof this.storage?.recordMessage === 'function' && this.roomId) {
@@ -2814,6 +3213,11 @@ Current Key: ${this.cryptoKey ? 'Loaded ✓' : 'Not set ✗'}</pre>
         this.setWaitingBanner(false, '', 'Share the invite link below to bring someone into this secure room.');
         this.currentShareLink = '';
         this.isHost = false;
+        this.roomSalt = null;
+        this.roomSaltBase64 = '';
+        this.pendingRoomSalt = null;
+        this.connectionFingerprint = '';
+        this.resetMessageCounters();
 
         const shareLinkEl = document.getElementById('shareLink');
         if (shareLinkEl) {
@@ -2827,6 +3231,8 @@ Current Key: ${this.cryptoKey ? 'Loaded ✓' : 'Not set ✗'}</pre>
         }
 
         this.updateSimpleShareStatus('');
+        this.updateRoomSaltDisplay();
+        this.updateFingerprintDisplay(null);
 
         if (this.conn) this.conn.close();
         if (this.peer) this.peer.destroy();
@@ -2849,6 +3255,10 @@ Current Key: ${this.cryptoKey ? 'Loaded ✓' : 'Not set ✗'}</pre>
         document.getElementById('hostPassword').value = '';
         document.getElementById('joinPassword').value = '';
         document.getElementById('joinCode').value = '';
+        const joinSalt = document.getElementById('joinSalt');
+        if (joinSalt) {
+          joinSalt.value = '';
+        }
 
         this.updateStatus('Disconnected', '');
         this.showWelcome();
