@@ -914,76 +914,484 @@
   <script src="https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js"></script>
 
   <script>
+    const EVENT_SEMVER = '1.0.0';
+    const SNAPSHOT_THRESHOLD = 200;
+
+    function generateId(prefix = '') {
+      const core = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+        ? crypto.randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+      return prefix ? `${prefix}${core}` : core;
+    }
+
+    function makeEvent(op, payload, actor, refs = []) {
+      return {
+        id: generateId('evt-'),
+        op,
+        payload,
+        actor: actor || 'system',
+        refs,
+        at: Date.now(),
+        semver: EVENT_SEMVER
+      };
+    }
+
+    class ChatState {
+      constructor() {
+        this.rooms = new Map();
+        this.messages = new Map();
+        this.byRoom = new Map();
+        this.reactions = new Map();
+      }
+    }
+
+    function ensureRoom(state, roomId, defaults = {}) {
+      if (!state.rooms.has(roomId)) {
+        state.rooms.set(roomId, {
+          id: roomId,
+          title: defaults.title || roomId,
+          members: new Set(defaults.members || []),
+          pinned: new Set(defaults.pinned || []),
+          lastActive: defaults.lastActive ?? 0,
+          createdAt: defaults.createdAt ?? defaults.lastActive ?? 0
+        });
+      }
+      if (!state.byRoom.has(roomId)) {
+        state.byRoom.set(roomId, Array.isArray(defaults.messageOrder) ? [...defaults.messageOrder] : []);
+      }
+      const room = state.rooms.get(roomId);
+      if (defaults.title && !room.title) {
+        room.title = defaults.title;
+      }
+      if (typeof defaults.lastActive === 'number' && !room.lastActive) {
+        room.lastActive = defaults.lastActive;
+      }
+      if (typeof defaults.createdAt === 'number' && !room.createdAt) {
+        room.createdAt = defaults.createdAt;
+      }
+      return room;
+    }
+
+    function reduce(state, event) {
+      const type = event?.op;
+      const payload = event?.payload || {};
+
+      switch (type) {
+        case 'RoomCreated': {
+          const { roomId, title } = payload;
+          const room = ensureRoom(state, roomId, { title, createdAt: event.at, lastActive: event.at });
+          room.title = title;
+          room.createdAt = event.at;
+          room.lastActive = event.at;
+          break;
+        }
+        case 'UserJoinedRoom': {
+          const { roomId, userId } = payload;
+          const room = ensureRoom(state, roomId);
+          room.members.add(userId);
+          room.lastActive = Math.max(room.lastActive || 0, event.at || 0);
+          break;
+        }
+        case 'UserLeftRoom': {
+          const { roomId, userId } = payload;
+          const room = ensureRoom(state, roomId);
+          room.members.delete(userId);
+          room.lastActive = Math.max(room.lastActive || 0, event.at || 0);
+          break;
+        }
+        case 'MessagePosted': {
+          const { roomId, messageId, userId, text, type: messageType } = payload;
+          const room = ensureRoom(state, roomId);
+          const message = {
+            id: messageId,
+            roomId,
+            userId,
+            text,
+            type: messageType || 'them',
+            at: event.at,
+            editedAt: undefined,
+            redacted: false
+          };
+          state.messages.set(messageId, message);
+          const order = state.byRoom.get(roomId) || [];
+          order.push(messageId);
+          state.byRoom.set(roomId, order);
+          room.lastActive = Math.max(room.lastActive || 0, event.at || 0);
+          break;
+        }
+        case 'MessageEdited': {
+          const { messageId, newText } = payload;
+          const message = state.messages.get(messageId);
+          if (message) {
+            message.text = newText;
+            message.editedAt = event.at;
+            const room = ensureRoom(state, message.roomId);
+            room.lastActive = Math.max(room.lastActive || 0, event.at || 0);
+          }
+          break;
+        }
+        case 'MessageRedacted': {
+          const { messageId } = payload;
+          const message = state.messages.get(messageId);
+          if (message) {
+            message.redacted = true;
+            const room = ensureRoom(state, message.roomId);
+            room.lastActive = Math.max(room.lastActive || 0, event.at || 0);
+          }
+          break;
+        }
+        case 'ReactionAdded': {
+          const { messageId, userId, emoji } = payload;
+          const emojiMap = state.reactions.get(messageId) || new Map();
+          const users = emojiMap.get(emoji) || new Set();
+          users.add(userId);
+          emojiMap.set(emoji, users);
+          state.reactions.set(messageId, emojiMap);
+          break;
+        }
+        case 'ReactionRemoved': {
+          const { messageId, userId, emoji } = payload;
+          const emojiMap = state.reactions.get(messageId);
+          if (emojiMap?.has(emoji)) {
+            const users = emojiMap.get(emoji);
+            users.delete(userId);
+            if (users.size === 0) {
+              emojiMap.delete(emoji);
+            }
+            if (emojiMap.size === 0) {
+              state.reactions.delete(messageId);
+            }
+          }
+          break;
+        }
+        case 'MessagePinned': {
+          const { roomId, messageId } = payload;
+          const room = ensureRoom(state, roomId);
+          room.pinned.add(messageId);
+          room.lastActive = Math.max(room.lastActive || 0, event.at || 0);
+          break;
+        }
+        case 'MessageUnpinned': {
+          const { roomId, messageId } = payload;
+          const room = ensureRoom(state, roomId);
+          room.pinned.delete(messageId);
+          room.lastActive = Math.max(room.lastActive || 0, event.at || 0);
+          break;
+        }
+        default:
+          break;
+      }
+    }
+
+    function serializeState(state) {
+      return {
+        rooms: Array.from(state.rooms.values()).map(room => ({
+          id: room.id,
+          title: room.title,
+          members: Array.from(room.members),
+          pinned: Array.from(room.pinned),
+          lastActive: room.lastActive || 0,
+          createdAt: room.createdAt || 0
+        })),
+        messages: Array.from(state.messages.values()).map(message => ({ ...message })),
+        byRoom: Array.from(state.byRoom.entries()).map(([roomId, ids]) => [roomId, [...ids]]),
+        reactions: Array.from(state.reactions.entries()).map(([messageId, emojiMap]) => ({
+          messageId,
+          emojis: Array.from(emojiMap.entries()).map(([emoji, users]) => ({
+            emoji,
+            users: Array.from(users)
+          }))
+        }))
+      };
+    }
+
+    function reviveState(raw) {
+      const state = new ChatState();
+      if (!raw) {
+        return state;
+      }
+
+      (raw.rooms || []).forEach(roomData => {
+        state.rooms.set(roomData.id, {
+          id: roomData.id,
+          title: roomData.title,
+          members: new Set(roomData.members || []),
+          pinned: new Set(roomData.pinned || []),
+          lastActive: roomData.lastActive || 0,
+          createdAt: roomData.createdAt || 0
+        });
+      });
+
+      (raw.byRoom || []).forEach(([roomId, ids]) => {
+        ensureRoom(state, roomId);
+        state.byRoom.set(roomId, Array.isArray(ids) ? [...ids] : []);
+      });
+
+      (raw.messages || []).forEach(message => {
+        state.messages.set(message.id, { ...message });
+        ensureRoom(state, message.roomId);
+      });
+
+      (raw.reactions || []).forEach(entry => {
+        const emojiMap = new Map();
+        (entry.emojis || []).forEach(({ emoji, users }) => {
+          emojiMap.set(emoji, new Set(users || []));
+        });
+        state.reactions.set(entry.messageId, emojiMap);
+      });
+
+      return state;
+    }
+
     class StorageManager {
       constructor() {
-        this.memoryRooms = [];
-        this.isLocalStorageAvailable = this.checkLocalStorage();
+        this.state = new ChatState();
+        this.db = null;
+        this.useMemory = false;
+        this.eventsBuffer = [];
+        this.snapshotFrequency = SNAPSHOT_THRESHOLD;
+        this.appliedSinceSnapshot = 0;
+        this.ready = this.init();
       }
 
-      checkLocalStorage() {
-        try {
-          const testKey = '__secure-chat-storage-test__';
-          localStorage.setItem(testKey, 'ok');
-          localStorage.removeItem(testKey);
-          return true;
-        } catch (error) {
-          console.warn('Local storage unavailable, falling back to in-memory history.', error);
-          return false;
-        }
-      }
-
-      readStoredRooms() {
-        if (!this.isLocalStorageAvailable) {
-          return [];
-        }
-
-        try {
-          const raw = localStorage.getItem('rooms');
-          if (!raw) {
-            return [];
-          }
-
-          const parsed = JSON.parse(raw);
-          return Array.isArray(parsed) ? parsed : [];
-        } catch (error) {
-          console.warn('Failed to read room history from storage.', error);
-          return [];
-        }
-      }
-
-      persistRooms(rooms) {
-        if (!this.isLocalStorageAvailable) {
-          this.memoryRooms = rooms;
+      async init() {
+        if (!('indexedDB' in window)) {
+          this.useMemory = true;
           return;
         }
 
         try {
-          localStorage.setItem('rooms', JSON.stringify(rooms));
+          this.db = await this.openDB();
+          await this.rehydrate();
         } catch (error) {
-          console.warn('Failed to write room history to storage.', error);
-          this.memoryRooms = rooms;
+          console.warn('IndexedDB unavailable, falling back to in-memory storage.', error);
+          this.useMemory = true;
+          this.db = null;
         }
       }
 
-      getRooms() {
-        if (!this.isLocalStorageAvailable) {
-          return this.memoryRooms;
-        }
+      openDB() {
+        return new Promise((resolve, reject) => {
+          const request = indexedDB.open('secure-chat-eventlog', 1);
 
-        const rooms = this.readStoredRooms();
-        if (!rooms.length && this.memoryRooms.length) {
-          return this.memoryRooms;
-        }
-        this.memoryRooms = rooms;
-        return rooms;
+          request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+
+            if (!db.objectStoreNames.contains('events')) {
+              const events = db.createObjectStore('events', { keyPath: 'id' });
+              events.createIndex('at', 'at');
+              events.createIndex('actor', 'actor');
+              events.createIndex('op', 'op');
+              events.createIndex('refs', 'refs', { multiEntry: true });
+            }
+
+            if (!db.objectStoreNames.contains('snapshots')) {
+              const snapshots = db.createObjectStore('snapshots', { keyPath: 'id' });
+              snapshots.createIndex('at', 'at');
+            }
+
+            if (!db.objectStoreNames.contains('blobs')) {
+              db.createObjectStore('blobs', { keyPath: 'id' });
+            }
+          };
+
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
       }
 
-      saveRoom(roomId) {
-        if (!roomId) return;
+      async rehydrate() {
+        if (this.useMemory || !this.db) {
+          return;
+        }
 
-        const existing = this.getRooms().filter(room => room.id !== roomId);
-        const updated = [{ id: roomId, time: Date.now() }, ...existing].slice(0, 5);
-        this.persistRooms(updated);
+        let snapshot = null;
+        try {
+          snapshot = await new Promise((resolve) => {
+            const tx = this.db.transaction('snapshots', 'readonly');
+            const store = tx.objectStore('snapshots');
+            const index = store.index('at');
+            const request = index.openCursor(null, 'prev');
+            request.onsuccess = (event) => {
+              const cursor = event.target.result;
+              resolve(cursor ? cursor.value : null);
+            };
+            request.onerror = () => resolve(null);
+          });
+        } catch (error) {
+          console.warn('Failed to read snapshot.', error);
+        }
+
+        if (snapshot?.state) {
+          this.state = reviveState(snapshot.state);
+        } else {
+          this.state = new ChatState();
+        }
+
+        const after = snapshot?.at ?? 0;
+        let events = [];
+        try {
+          events = await this.loadEventsAfter(after);
+        } catch (error) {
+          console.warn('Failed to load events.', error);
+          events = [];
+        }
+
+        events.sort((a, b) => (a.at || 0) - (b.at || 0));
+        for (const event of events) {
+          await this.apply(event, { persist: false });
+        }
+
+        this.appliedSinceSnapshot = events.length % this.snapshotFrequency;
+      }
+
+      loadEventsAfter(at) {
+        if (this.useMemory) {
+          return Promise.resolve(this.eventsBuffer.filter(event => (event.at || 0) > at));
+        }
+
+        if (!this.db) {
+          return Promise.resolve([]);
+        }
+
+        return new Promise((resolve) => {
+          const tx = this.db.transaction('events', 'readonly');
+          const index = tx.objectStore('events').index('at');
+          const range = at ? IDBKeyRange.lowerBound(at, true) : null;
+          const request = index.getAll(range);
+          request.onsuccess = () => resolve(request.result || []);
+          request.onerror = () => resolve([]);
+        });
+      }
+
+      async apply(event, { persist = true } = {}) {
+        if (!event) {
+          return;
+        }
+
+        if (persist && !this.useMemory && this.db) {
+          await new Promise((resolve, reject) => {
+            const tx = this.db.transaction('events', 'readwrite');
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+            tx.objectStore('events').put(event);
+          });
+        } else if (persist && this.useMemory) {
+          this.eventsBuffer.push(event);
+        }
+
+        reduce(this.state, event);
+
+        if (persist && !this.useMemory) {
+          this.appliedSinceSnapshot += 1;
+          if (this.appliedSinceSnapshot >= this.snapshotFrequency) {
+            await this.snapshot();
+          }
+        }
+      }
+
+      async snapshot() {
+        if (this.useMemory || !this.db) {
+          return;
+        }
+
+        const snapshot = {
+          id: generateId('snap-'),
+          at: Date.now(),
+          state: serializeState(this.state)
+        };
+
+        await new Promise((resolve, reject) => {
+          const tx = this.db.transaction('snapshots', 'readwrite');
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+          tx.objectStore('snapshots').put(snapshot);
+        });
+
+        this.appliedSinceSnapshot = 0;
+      }
+
+      async saveRoom(roomId, { actorId = 'local', title = '' } = {}) {
+        if (!roomId) {
+          return;
+        }
+
+        await this.ready;
+        const roomTitle = title || roomId;
+
+        if (!this.state.rooms.has(roomId)) {
+          await this.apply(makeEvent('RoomCreated', { roomId, title: roomTitle }, actorId, [`room:${roomId}`]));
+        }
+
+        await this.apply(makeEvent('UserJoinedRoom', { roomId, userId: actorId }, actorId, [`room:${roomId}`, `user:${actorId}`]));
+      }
+
+      async leaveRoom(roomId, { actorId = 'local' } = {}) {
+        if (!roomId) {
+          return;
+        }
+
+        await this.ready;
+        await this.apply(makeEvent('UserLeftRoom', { roomId, userId: actorId }, actorId, [`room:${roomId}`, `user:${actorId}`]));
+      }
+
+      async recordMessage({ roomId, text, type = 'them', actorId = 'system', userId, messageId }) {
+        if (!roomId || !text) {
+          return null;
+        }
+
+        await this.ready;
+        const id = messageId || generateId('msg-');
+        const event = makeEvent(
+          'MessagePosted',
+          { roomId, messageId: id, userId: userId || actorId, text, type },
+          actorId,
+          [`room:${roomId}`, `msg:${id}`]
+        );
+
+        await this.apply(event);
+        return this.state.messages.get(id);
+      }
+
+      async getRooms() {
+        await this.ready;
+
+        const rooms = Array.from(this.state.rooms.values()).map(room => ({
+          id: room.id,
+          title: room.title,
+          time: room.lastActive || room.createdAt || 0
+        }));
+
+        rooms.sort((a, b) => (b.time || 0) - (a.time || 0));
+        return rooms.slice(0, 5);
+      }
+
+      async getMessages(roomId) {
+        await this.ready;
+
+        if (!roomId) {
+          return [];
+        }
+
+        const ids = this.state.byRoom.get(roomId) || [];
+        const messages = [];
+
+        for (const id of ids) {
+          const message = this.state.messages.get(id);
+          if (!message || message.redacted) {
+            continue;
+          }
+
+          messages.push({
+            id: message.id,
+            content: message.text,
+            type: message.type || 'them',
+            at: message.at,
+            editedAt: message.editedAt
+          });
+        }
+
+        return messages;
       }
     }
 
@@ -995,6 +1403,8 @@
         this.cryptoKey = null;
         this.isHost = false;
         this.currentShareLink = '';
+        this.localUserId = generateId('user-');
+        this.remoteUserId = null;
 
         this.initStorage();
         this.loadRoomHistory();
@@ -1162,22 +1572,28 @@
       // Storage
       initStorage() {
         this.storage = new StorageManager();
+        if (this.storage?.ready) {
+          this.storage.ready.then(() => this.loadRoomHistory());
+        }
       }
 
-      loadRoomHistory() {
-        let rooms = [];
-        try {
-          rooms = this.storage?.getRooms?.() || [];
-        } catch (error) {
-          console.warn('Unable to load room history.', error);
-          rooms = [];
-        }
-
+      async loadRoomHistory() {
         const container = document.getElementById('roomHistory');
         const items = document.getElementById('historyItems');
 
         if (!container || !items) {
           return;
+        }
+
+        let rooms = [];
+
+        if (typeof this.storage?.getRooms === 'function') {
+          try {
+            rooms = await this.storage.getRooms();
+          } catch (error) {
+            console.warn('Unable to load room history.', error);
+            rooms = [];
+          }
         }
 
         if (rooms.length > 0) {
@@ -1190,6 +1606,7 @@
           `).join('');
         } else {
           container.style.display = 'none';
+          items.innerHTML = '';
         }
       }
 
@@ -1199,7 +1616,8 @@
         }
 
         try {
-          await this.storage.saveRoom(this.roomId);
+          await this.storage.saveRoom(this.roomId, { actorId: this.localUserId, title: this.roomId });
+          await this.loadRoomHistory();
         } catch (error) {
           console.warn('Failed to save room history.', error);
         }
@@ -1438,6 +1856,7 @@
         }
 
         this.conn = activeConn;
+        this.remoteUserId = activeConn.peer || 'peer';
 
         activeConn.on('open', async () => {
           console.log('Peer connection established');
@@ -1470,12 +1889,22 @@
           const decrypted = await this.decrypt(new Uint8Array(data));
           if (decrypted) {
             this.displayMessage(decrypted, 'them');
+            if (typeof this.storage?.recordMessage === 'function' && this.roomId) {
+              this.storage.recordMessage({
+                roomId: this.roomId,
+                text: decrypted,
+                type: 'them',
+                actorId: this.remoteUserId || 'peer',
+                userId: this.remoteUserId || 'peer'
+              }).catch(error => console.warn('Failed to record incoming message.', error));
+            }
           } else {
             this.addSystemMessage('⚠️ Failed to decrypt message');
           }
         });
 
         activeConn.on('close', () => {
+          this.remoteUserId = null;
           if (this.isHost && this.currentShareLink) {
             this.updateStatus('Waiting for peer...', 'connecting');
             this.addSystemMessage('👋 Peer disconnected');
@@ -1498,10 +1927,20 @@
         const text = input.value.trim();
         
         if (!text || !this.conn) return;
-        
+
         input.value = '';
         this.displayMessage(text, 'me');
-        
+
+        if (typeof this.storage?.recordMessage === 'function' && this.roomId) {
+          this.storage.recordMessage({
+            roomId: this.roomId,
+            text,
+            type: 'me',
+            actorId: this.localUserId,
+            userId: this.localUserId
+          }).catch(error => console.warn('Failed to record outgoing message.', error));
+        }
+
         const encrypted = await this.encrypt(text);
         this.conn.send(encrypted);
       }
@@ -1545,6 +1984,12 @@
 
       // Disconnect
       disconnect() {
+        const activeRoom = this.roomId;
+        if (activeRoom && typeof this.storage?.leaveRoom === 'function') {
+          this.storage.leaveRoom(activeRoom, { actorId: this.localUserId })
+            .catch(error => console.warn('Failed to record room leave.', error));
+        }
+
         this.setWaitingBanner(false, '', 'Share the invite link below to bring someone into this secure room.');
         this.currentShareLink = '';
         this.isHost = false;
@@ -1567,7 +2012,8 @@
         this.peer = null;
         this.cryptoKey = null;
         this.roomId = null;
-        
+        this.remoteUserId = null;
+
         document.getElementById('chatMessages').innerHTML = '';
         document.getElementById('hostPassword').value = '';
         document.getElementById('joinPassword').value = '';
