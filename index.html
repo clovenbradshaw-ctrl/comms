@@ -815,6 +815,79 @@
   <script src="https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js"></script>
 
   <script>
+    class StorageManager {
+      constructor() {
+        this.memoryRooms = [];
+        this.isLocalStorageAvailable = this.checkLocalStorage();
+      }
+
+      checkLocalStorage() {
+        try {
+          const testKey = '__secure-chat-storage-test__';
+          localStorage.setItem(testKey, 'ok');
+          localStorage.removeItem(testKey);
+          return true;
+        } catch (error) {
+          console.warn('Local storage unavailable, falling back to in-memory history.', error);
+          return false;
+        }
+      }
+
+      readStoredRooms() {
+        if (!this.isLocalStorageAvailable) {
+          return [];
+        }
+
+        try {
+          const raw = localStorage.getItem('rooms');
+          if (!raw) {
+            return [];
+          }
+
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? parsed : [];
+        } catch (error) {
+          console.warn('Failed to read room history from storage.', error);
+          return [];
+        }
+      }
+
+      persistRooms(rooms) {
+        if (!this.isLocalStorageAvailable) {
+          this.memoryRooms = rooms;
+          return;
+        }
+
+        try {
+          localStorage.setItem('rooms', JSON.stringify(rooms));
+        } catch (error) {
+          console.warn('Failed to write room history to storage.', error);
+          this.memoryRooms = rooms;
+        }
+      }
+
+      getRooms() {
+        if (!this.isLocalStorageAvailable) {
+          return this.memoryRooms;
+        }
+
+        const rooms = this.readStoredRooms();
+        if (!rooms.length && this.memoryRooms.length) {
+          return this.memoryRooms;
+        }
+        this.memoryRooms = rooms;
+        return rooms;
+      }
+
+      saveRoom(roomId) {
+        if (!roomId) return;
+
+        const existing = this.getRooms().filter(room => room.id !== roomId);
+        const updated = [{ id: roomId, time: Date.now() }, ...existing].slice(0, 5);
+        this.persistRooms(updated);
+      }
+    }
+
     class SecureChat {
       constructor() {
         this.peer = null;
@@ -918,33 +991,25 @@
 
       // Storage
       initStorage() {
-        this.storage = {
-          saveRoom: (roomId) => {
-            try {
-              let rooms = JSON.parse(localStorage.getItem('rooms') || '[]');
-              rooms = rooms.filter(r => r.id !== roomId);
-              rooms.unshift({ id: roomId, time: Date.now() });
-              rooms = rooms.slice(0, 5);
-              localStorage.setItem('rooms', JSON.stringify(rooms));
-            } catch(e) {
-              console.log('Storage not available');
-            }
-          },
-          getRooms: () => {
-            try {
-              return JSON.parse(localStorage.getItem('rooms') || '[]');
-            } catch(e) {
-              return [];
-            }
-          }
-        };
+        this.storage = new StorageManager();
       }
 
       loadRoomHistory() {
-        const rooms = this.storage.getRooms();
+        let rooms = [];
+        try {
+          rooms = this.storage?.getRooms?.() || [];
+        } catch (error) {
+          console.warn('Unable to load room history.', error);
+          rooms = [];
+        }
+
         const container = document.getElementById('roomHistory');
         const items = document.getElementById('historyItems');
-        
+
+        if (!container || !items) {
+          return;
+        }
+
         if (rooms.length > 0) {
           container.style.display = 'block';
           items.innerHTML = rooms.map(room => `
