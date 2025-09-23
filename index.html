@@ -395,6 +395,76 @@
       align-items: center;
     }
 
+    .waiting-banner {
+      display: none;
+      margin: 1.5rem;
+      margin-bottom: 0;
+      padding: 1.25rem;
+      background: rgba(0, 102, 255, 0.08);
+      border: 1px solid rgba(0, 102, 255, 0.25);
+      border-radius: 16px;
+      gap: 1rem;
+      align-items: flex-start;
+    }
+
+    .waiting-banner.active {
+      display: flex;
+    }
+
+    .waiting-icon {
+      font-size: 1.5rem;
+      line-height: 1;
+    }
+
+    .waiting-details {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      flex: 1;
+    }
+
+    .waiting-title {
+      font-weight: 600;
+      font-size: 1rem;
+    }
+
+    .waiting-subtitle {
+      color: var(--text-secondary);
+      font-size: 0.875rem;
+      line-height: 1.4;
+    }
+
+    .waiting-link-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: center;
+    }
+
+    .chat-share-link {
+      flex: 1;
+      min-width: 200px;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.75rem 1rem;
+      font-family: monospace;
+      font-size: 0.8rem;
+      word-break: break-all;
+      cursor: pointer;
+      transition: background 0.3s ease, border-color 0.3s ease;
+    }
+
+    .chat-share-link:hover {
+      background: var(--bg-secondary);
+      border-color: var(--accent);
+    }
+
+    #chatCopyLink:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
     .chat-room-info {
       display: flex;
       align-items: center;
@@ -645,6 +715,19 @@
       .chat-input-container {
         padding: 1rem;
       }
+
+      .waiting-banner {
+        margin: 1rem;
+      }
+
+      .waiting-link-row {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      #chatCopyLink {
+        width: 100%;
+      }
     }
 
     /* iOS Safe Areas */
@@ -792,6 +875,22 @@
           </button>
         </div>
 
+        <div id="waitingBanner" class="waiting-banner">
+          <div class="waiting-icon">⏳</div>
+          <div class="waiting-details">
+            <div class="waiting-title">Waiting for your guest</div>
+            <div id="waitingMessage" class="waiting-subtitle">Share the invite link below to bring someone into this secure room.</div>
+            <div class="waiting-link-row">
+              <div id="chatShareLink" class="chat-share-link" onclick="app.copyShareLink('chatShareLink')">
+                Generating link...
+              </div>
+              <button id="chatCopyLink" class="btn btn-secondary" onclick="app.copyShareLink('chatShareLink')" disabled>
+                📋 Copy Link
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div id="chatMessages" class="chat-messages">
           <!-- Messages will appear here -->
         </div>
@@ -895,12 +994,14 @@
         this.roomId = null;
         this.cryptoKey = null;
         this.isHost = false;
-        
+        this.currentShareLink = '';
+
         this.initStorage();
         this.loadRoomHistory();
         this.checkForSharedLink();
         this.initEventListeners();
         this.updateStatus('Disconnected', '');
+        this.setWaitingBanner(false, '');
       }
 
       initEventListeners() {
@@ -947,17 +1048,64 @@
         return `${baseUrl}?room=${encodeURIComponent(roomId)}&key=${encodeURIComponent(encodedHint)}`;
       }
 
-      copyShareLink() {
-        const link = document.getElementById('shareLink').textContent;
-        if (link && link !== 'Generating link...') {
-          navigator.clipboard.writeText(link).then(() => {
-            const elem = document.getElementById('shareLink');
-            const original = elem.textContent;
-            elem.textContent = '✅ Link copied!';
-            setTimeout(() => {
-              elem.textContent = original;
-            }, 2000);
-          });
+      copyShareLink(targetId = 'shareLink') {
+        const elem = document.getElementById(targetId);
+        if (!elem) {
+          return;
+        }
+
+        const storedLink = elem.dataset?.link;
+        const link = storedLink || elem.textContent;
+
+        if (!link || link === 'Generating link...') {
+          return;
+        }
+
+        navigator.clipboard.writeText(link).then(() => {
+          const original = elem.textContent;
+          elem.textContent = '✅ Link copied!';
+          setTimeout(() => {
+            elem.textContent = elem.dataset?.link || original;
+          }, 2000);
+        });
+      }
+
+      setWaitingBanner(visible, link, message) {
+        const banner = document.getElementById('waitingBanner');
+        const linkEl = document.getElementById('chatShareLink');
+        const messageEl = document.getElementById('waitingMessage');
+        const copyBtn = document.getElementById('chatCopyLink');
+
+        if (!banner || !linkEl) {
+          return;
+        }
+
+        if (link !== undefined) {
+          if (link) {
+            linkEl.textContent = link;
+            linkEl.dataset.link = link;
+          } else {
+            linkEl.textContent = 'Generating link...';
+            delete linkEl.dataset.link;
+          }
+        }
+
+        if (message && messageEl) {
+          messageEl.textContent = message;
+        }
+
+        const hasLink = Boolean(linkEl.dataset.link);
+
+        if (visible && hasLink) {
+          banner.classList.add('active');
+          if (copyBtn) {
+            copyBtn.disabled = false;
+          }
+        } else {
+          banner.classList.remove('active');
+          if (copyBtn) {
+            copyBtn.disabled = true;
+          }
         }
       }
 
@@ -976,6 +1124,13 @@
         this.roomId = this.generateRoomId();
         document.getElementById('roomCode').textContent = this.roomId;
         document.getElementById('shareSection').style.display = 'none';
+        const shareLinkEl = document.getElementById('shareLink');
+        if (shareLinkEl) {
+          shareLinkEl.textContent = 'Generating link...';
+          delete shareLinkEl.dataset.link;
+        }
+        this.currentShareLink = '';
+        this.setWaitingBanner(false, '');
         this.showScreen('hostScreen');
       }
 
@@ -992,6 +1147,12 @@
         document.getElementById('chatScreen').classList.add('active');
 
         document.getElementById('currentRoom').textContent = this.roomId;
+
+        if (this.isHost && this.currentShareLink) {
+          this.setWaitingBanner(true, this.currentShareLink);
+        } else {
+          this.setWaitingBanner(false);
+        }
 
         setTimeout(() => {
           document.getElementById('messageInput').focus();
@@ -1155,8 +1316,14 @@
 
         // Generate and display the share link
         const shareLink = this.generateShareLink(this.roomId, password);
-        document.getElementById('shareLink').textContent = shareLink;
+        const shareLinkEl = document.getElementById('shareLink');
+        if (shareLinkEl) {
+          shareLinkEl.textContent = shareLink;
+          shareLinkEl.dataset.link = shareLink;
+        }
         document.getElementById('shareSection').style.display = 'block';
+        this.currentShareLink = shareLink;
+        this.setWaitingBanner(true, shareLink, 'Share this link with someone to start chatting.');
         this.showChat();
 
         this.initPeer(this.roomId);
@@ -1173,9 +1340,11 @@
 
         this.roomId = roomId;
         this.isHost = false;
+        this.currentShareLink = '';
         this.cryptoKey = await this.deriveKey(password);
         this.updateStatus('Connecting...', 'connecting');
-        
+        this.setWaitingBanner(false, '');
+
         const joinerId = 'join-' + Math.random().toString(36).substr(2, 9);
         this.initPeer(joinerId);
       }
@@ -1202,6 +1371,7 @@
             this.updateStatus('Waiting for peer...', 'connecting');
             this.addSystemMessage(`Room created: ${this.roomId}`);
             this.addSystemMessage('Waiting for someone to join...');
+            this.setWaitingBanner(true, this.currentShareLink, 'Waiting for someone to join...');
 
             await this.persistRoom();
           } else {
@@ -1215,6 +1385,7 @@
             console.log('Peer connecting');
             this.addSystemMessage('Peer is connecting...');
             this.updateStatus('Peer connecting...', 'connecting');
+            this.setWaitingBanner(true, this.currentShareLink, 'Someone is connecting...');
             this.setupConnection(conn);
           });
         }
@@ -1237,7 +1408,16 @@
               const password = document.getElementById('hostPassword').value;
               if (password) {
                 const shareLink = this.generateShareLink(this.roomId, password);
-                document.getElementById('shareLink').textContent = shareLink;
+                const shareLinkEl = document.getElementById('shareLink');
+                if (shareLinkEl) {
+                  shareLinkEl.textContent = shareLink;
+                  shareLinkEl.dataset.link = shareLink;
+                }
+                this.currentShareLink = shareLink;
+                this.setWaitingBanner(true, shareLink, 'Share this link with someone to start chatting.');
+              } else {
+                this.currentShareLink = '';
+                this.setWaitingBanner(false, '');
               }
 
               this.addSystemMessage(`Room ID was taken, new room: ${this.roomId}`);
@@ -1268,6 +1448,10 @@
             this.showChat();
           }
 
+          if (this.isHost) {
+            this.setWaitingBanner(false);
+          }
+
           await this.persistRoom();
 
           if (typeof this.storage?.getMessages === 'function') {
@@ -1292,8 +1476,14 @@
         });
 
         activeConn.on('close', () => {
-          this.updateStatus('Disconnected', '');
-          this.addSystemMessage('👋 Peer disconnected');
+          if (this.isHost && this.currentShareLink) {
+            this.updateStatus('Waiting for peer...', 'connecting');
+            this.addSystemMessage('👋 Peer disconnected');
+            this.setWaitingBanner(true, this.currentShareLink, 'Your guest disconnected. Share the link to invite someone else.');
+          } else {
+            this.updateStatus('Disconnected', '');
+            this.addSystemMessage('👋 Peer disconnected');
+          }
         });
 
         activeConn.on('error', (err) => {
@@ -1355,9 +1545,24 @@
 
       // Disconnect
       disconnect() {
+        this.setWaitingBanner(false, '', 'Share the invite link below to bring someone into this secure room.');
+        this.currentShareLink = '';
+        this.isHost = false;
+
+        const shareLinkEl = document.getElementById('shareLink');
+        if (shareLinkEl) {
+          shareLinkEl.textContent = 'Generating link...';
+          delete shareLinkEl.dataset.link;
+        }
+
+        const shareSection = document.getElementById('shareSection');
+        if (shareSection) {
+          shareSection.style.display = 'none';
+        }
+
         if (this.conn) this.conn.close();
         if (this.peer) this.peer.destroy();
-        
+
         this.conn = null;
         this.peer = null;
         this.cryptoKey = null;
