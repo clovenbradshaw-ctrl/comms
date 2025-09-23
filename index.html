@@ -376,6 +376,26 @@
       background: var(--bg-secondary);
     }
 
+    .simple-setup {
+      margin-top: 0.5rem;
+      padding: 1rem;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .simple-status {
+      font-size: 0.75rem;
+      color: var(--accent);
+      min-height: 1em;
+    }
+
+    .simple-status.error {
+      color: var(--error);
+    }
+
     /* Chat Interface */
     .chat-container {
       height: 100%;
@@ -823,7 +843,14 @@
             <div class="share-link" id="shareLink" onclick="app.copyShareLink()">
               Generating link...
             </div>
-            <button class="btn btn-primary" style="width: 100%;" onclick="app.copyShareLink()">📋 Copy Link</button>
+            <button class="btn btn-primary" style="width: 100%; margin-bottom: 1rem;" onclick="app.copyShareLink()">📋 Copy Link</button>
+
+            <div class="simple-setup">
+              <label class="input-label" for="simpleEmail">Simple setup (optional)</label>
+              <input type="email" id="simpleEmail" class="input-field" placeholder="Invite email (leave blank to use device share)">
+              <button class="btn btn-secondary" style="width: 100%;" onclick="app.simpleShareInvite()">✨ Simple Setup: Share Invite</button>
+              <div id="simpleShareStatus" class="simple-status"></div>
+            </div>
           </div>
           
           <button class="btn btn-secondary" style="width: 100%; margin-top: 1rem;" onclick="app.showWelcome()">
@@ -1410,6 +1437,7 @@
         this.loadRoomHistory();
         this.checkForSharedLink();
         this.initEventListeners();
+        this.initSimpleSetup();
         this.updateStatus('Disconnected', '');
         this.setWaitingBanner(false, '');
       }
@@ -1419,9 +1447,133 @@
         document.getElementById('messageInput').addEventListener('keypress', (e) => {
           if (e.key === 'Enter') this.sendMessage();
         });
-        
+
         // Send button
         document.getElementById('sendBtn').addEventListener('click', () => this.sendMessage());
+      }
+
+      initSimpleSetup() {
+        this.simpleEmailInput = document.getElementById('simpleEmail');
+        this.simpleShareStatusEl = document.getElementById('simpleShareStatus');
+
+        if (!this.simpleEmailInput) {
+          return;
+        }
+
+        const storedEmail = this.getStoredInviteEmail();
+        if (storedEmail) {
+          this.simpleEmailInput.value = storedEmail;
+        }
+
+        const persist = () => {
+          const value = this.simpleEmailInput.value.trim();
+          if (!this.isValidEmail(value)) {
+            this.updateSimpleShareStatus('Enter a valid email or leave blank to use the share menu.', true);
+            return;
+          }
+          this.storeInviteEmail(value);
+          if (this.simpleShareStatusEl?.classList.contains('error')) {
+            this.updateSimpleShareStatus('');
+          }
+        };
+
+        this.simpleEmailInput.addEventListener('change', persist);
+        this.simpleEmailInput.addEventListener('blur', persist);
+      }
+
+      getStoredInviteEmail() {
+        if (!this.storage?.isLocalStorageAvailable) {
+          return '';
+        }
+
+        try {
+          return localStorage.getItem('simpleInviteEmail') || '';
+        } catch (error) {
+          console.warn('Unable to read stored invite email.', error);
+          return '';
+        }
+      }
+
+      storeInviteEmail(email) {
+        if (!this.storage?.isLocalStorageAvailable) {
+          return;
+        }
+
+        try {
+          if (email) {
+            localStorage.setItem('simpleInviteEmail', email);
+          } else {
+            localStorage.removeItem('simpleInviteEmail');
+          }
+        } catch (error) {
+          console.warn('Unable to persist invite email preference.', error);
+        }
+      }
+
+      isValidEmail(email) {
+        if (!email) {
+          return true;
+        }
+
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+      }
+
+      updateSimpleShareStatus(message = '', isError = false) {
+        if (!this.simpleShareStatusEl) {
+          return;
+        }
+
+        this.simpleShareStatusEl.textContent = message;
+        this.simpleShareStatusEl.classList.toggle('error', Boolean(isError));
+      }
+
+      simpleShareInvite() {
+        const shareLinkEl = document.getElementById('shareLink');
+        const password = document.getElementById('hostPassword')?.value || '';
+        const link = this.currentShareLink || shareLinkEl?.dataset?.link || shareLinkEl?.textContent?.trim();
+
+        if (!link || link === 'Generating link...') {
+          this.updateSimpleShareStatus('Generate a link first by starting a secure room.', true);
+          return;
+        }
+
+        const email = this.simpleEmailInput?.value.trim();
+        if (!this.isValidEmail(email)) {
+          this.updateSimpleShareStatus('Enter a valid email or leave blank to use the share menu.', true);
+          return;
+        }
+        this.storeInviteEmail(email || '');
+        const payload = `Join my secure room on Secure Chat.
+
+Link: ${link}
+Password: ${password || 'Share separately'}
+`;
+
+        this.updateSimpleShareStatus('');
+
+        if (email) {
+          const subject = encodeURIComponent('Join my Secure Chat room');
+          const body = encodeURIComponent(payload);
+          window.location.href = `mailto:${encodeURIComponent(email)}?subject=${subject}&body=${body}`;
+          this.updateSimpleShareStatus('Opening your email app...', false);
+          return;
+        }
+
+        if (navigator.share) {
+          navigator.share({ text: payload })
+            .then(() => {
+              this.updateSimpleShareStatus('Invite shared.', false);
+            })
+            .catch((error) => {
+              console.warn('Share failed, falling back to copy.', error);
+              this.copyShareLink();
+              this.updateSimpleShareStatus('Share menu unavailable. Link copied instead.', false);
+            });
+          return;
+        }
+
+        this.copyShareLink();
+        this.updateSimpleShareStatus('Share unsupported. Link copied to clipboard.', false);
       }
 
       // Check URL parameters for shared link
@@ -1741,6 +1893,7 @@
         }
         document.getElementById('shareSection').style.display = 'block';
         this.currentShareLink = shareLink;
+        this.updateSimpleShareStatus('');
         this.setWaitingBanner(true, shareLink, 'Share this link with someone to start chatting.');
         this.showChat();
 
@@ -2004,6 +2157,8 @@
         if (shareSection) {
           shareSection.style.display = 'none';
         }
+
+        this.updateSimpleShareStatus('');
 
         if (this.conn) this.conn.close();
         if (this.peer) this.peer.destroy();
