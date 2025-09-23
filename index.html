@@ -7,6 +7,7 @@
   <meta name="description" content="Secure P2P chat with end-to-end encryption">
   
   <!-- PWA Meta Tags -->
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="Secure Chat">
@@ -1370,14 +1371,22 @@
 
       generateRoomId() {
         const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+        const timestampSegment = Date.now().toString(36).slice(-3);
         let result = '';
+
         for (let i = 0; i < 3; i++) {
           if (i > 0) result += '-';
           for (let j = 0; j < 3; j++) {
             result += chars[Math.floor(Math.random() * chars.length)];
           }
         }
-        return result;
+
+        let randomSuffix = '';
+        for (let i = 0; i < 3; i++) {
+          randomSuffix += chars[Math.floor(Math.random() * chars.length)];
+        }
+
+        return `${result}-${timestampSegment}-${randomSuffix}`;
       }
 
       showHostSetup() {
@@ -1407,6 +1416,20 @@
       }
 
       createPeerConnection(retryCount = 0) {
+        if (retryCount > 0) {
+          this.roomId = this.generateRoomId();
+          const roomCodeEl = document.getElementById('roomCode');
+          if (roomCodeEl) {
+            roomCodeEl.textContent = this.roomId;
+          }
+          this.addSystemMessage(`Room ID was taken, trying: ${this.roomId}`);
+        }
+
+        if (this.peer) {
+          this.peer.destroy();
+          this.peer = null;
+        }
+
         console.log('Creating peer with ID:', this.roomId);
 
         this.peer = new Peer(this.roomId, {
@@ -1457,10 +1480,6 @@
                 await this.storage.deleteRoom(this.roomId);
                 await this.loadRoomHistory();
               }
-
-              this.roomId = this.generateRoomId();
-              document.getElementById('roomCode').textContent = this.roomId;
-              this.addSystemMessage(`Room ID was taken, trying: ${this.roomId}`);
 
               setTimeout(() => {
                 this.createPeerConnection(retryCount + 1);
