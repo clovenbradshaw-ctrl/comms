@@ -19,6 +19,8 @@
       --message-me: #0066ff;
       --border: #333;
       --shadow: 0 10px 40px rgba(0, 0, 0, 0.8);
+      --reorder-fade-delay: 5s;
+      --reorder-glow-duration: 2s;
     }
 
     body {
@@ -593,6 +595,63 @@
       display: flex;
     }
 
+    .network-status-bar {
+      margin: 0 1.5rem 0.75rem;
+      color: var(--text-secondary);
+      font-size: 0.8rem;
+    }
+
+    .network-status-mini {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+
+    .network-metrics {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      white-space: nowrap;
+    }
+
+    .average-hops {
+      color: var(--text-secondary);
+    }
+
+    .connection-state {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .network-status-bar .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-secondary);
+    }
+
+    .status-dot.online {
+      background: var(--success);
+    }
+
+    .status-dot.offline {
+      background: var(--error);
+    }
+
+    .status-dot.degraded {
+      background: var(--warning);
+    }
+
+    .reorder-indicator {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      color: var(--warning);
+      white-space: nowrap;
+    }
+
     .waiting-icon {
       font-size: 1.5rem;
       line-height: 1;
@@ -690,6 +749,7 @@
       align-items: flex-end;
       gap: 0.5rem;
       animation: messageIn 0.3s ease;
+      position: relative;
     }
 
     @keyframes messageIn {
@@ -726,10 +786,99 @@
       line-height: 1.5;
     }
 
-    .message-time {
+    .message-meta {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
       font-size: 0.7rem;
       opacity: 0.6;
       margin-top: 0.25rem;
+    }
+
+    .timestamp {
+      white-space: nowrap;
+    }
+
+    .state-dots {
+      letter-spacing: 2px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .reorder-badge {
+      position: absolute;
+      top: -8px;
+      right: 10px;
+      background: linear-gradient(135deg, #f59e0b, #d97706);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      padding: 2px 8px;
+      font-size: 11px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      z-index: 10;
+      opacity: 0;
+      animation: badge-appear 0.3s forwards;
+      transition: all 0.2s;
+    }
+
+    .reorder-badge:hover {
+      transform: scale(1.1);
+      box-shadow: 0 2px 8px rgba(245, 158, 11, 0.4);
+    }
+
+    .badge-icon {
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .badge-text {
+      font-weight: 600;
+    }
+
+    .message:not(:hover) .reorder-badge {
+      animation: badge-fade 0.5s forwards;
+      animation-delay: var(--reorder-fade-delay, 5s);
+    }
+
+    @keyframes badge-appear {
+      to { opacity: 1; }
+    }
+
+    @keyframes badge-fade {
+      to { opacity: 0.3; }
+    }
+
+    .message.reordered {
+      position: relative;
+    }
+
+    .message.reordered::before {
+      content: '';
+      position: absolute;
+      inset: -2px;
+      background: linear-gradient(135deg, transparent, rgba(245, 158, 11, 0.1), transparent);
+      border-radius: 20px;
+      opacity: 0;
+      animation: gentle-glow var(--reorder-glow-duration, 2s);
+    }
+
+    @keyframes gentle-glow {
+      0%, 100% { opacity: 0; }
+      50% { opacity: 1; }
+    }
+
+    .message.shifted {
+      animation: shiftedPulse 0.4s ease;
+    }
+
+    @keyframes shiftedPulse {
+      0% { transform: translateY(0); }
+      50% { transform: translateY(2px); }
+      100% { transform: translateY(0); }
     }
 
     .system-message {
@@ -756,6 +905,127 @@
       display: flex;
       flex-direction: column;
       gap: 0.35rem;
+    }
+
+    .message-details-modal {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 3000;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+
+    .message-details-modal.show {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .message-details-modal .modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+    }
+
+    .message-details-modal .modal-content {
+      position: relative;
+      background: var(--bg-secondary);
+      border-radius: 16px;
+      padding: 1.5rem;
+      width: min(420px, calc(100% - 3rem));
+      box-shadow: var(--shadow);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      transform: translateY(10px);
+      transition: transform 0.2s ease;
+    }
+
+    .message-details-modal.show .modal-content {
+      transform: translateY(0);
+    }
+
+    .message-details-modal h3 {
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .detail-section {
+      margin-bottom: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .detail-section label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+    }
+
+    .route-path {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      font-size: 0.85rem;
+    }
+
+    .route-node {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.4rem 0.6rem;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 999px;
+    }
+
+    .route-arrow {
+      opacity: 0.4;
+    }
+
+    .timing-info {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      font-size: 0.85rem;
+    }
+
+    .network-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      font-size: 0.85rem;
+    }
+
+    .network-stats .stat {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.35rem 0.6rem;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 999px;
+    }
+
+    .modal-close {
+      width: 100%;
+      margin-top: 0.5rem;
+      padding: 0.75rem;
+      border-radius: 12px;
+      border: none;
+      background: var(--accent);
+      color: var(--text-primary);
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+
+    .modal-close:hover {
+      background: var(--accent-hover);
     }
 
     .data-label {

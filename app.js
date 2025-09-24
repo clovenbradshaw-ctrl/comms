@@ -26,6 +26,7 @@ const DOM = {
   statusText: document.getElementById('statusText'),
   statusDot: document.getElementById('statusDot'),
   chatMessages: document.getElementById('chatMessages'),
+  networkStatus: document.getElementById('networkStatus'),
   encryptedToggle: document.getElementById('encryptedToggle'),
   schemaToggle: document.getElementById('schemaToggle'),
   systemAnnouncements: document.getElementById('systemAnnouncements'),
@@ -67,6 +68,425 @@ const FEATURE_FLAGS = (() => {
   return merged;
 })();
 
+const CONFIG = {
+  reorderBadgeFadeDelay: 5000,
+  reorderGlowDuration: 2000,
+  messageInsertAnimation: 400,
+  batchWaitTime: 200,
+  maxBatchSize: 10,
+  showHopCount: true,
+  showRoutePath: true,
+  autoScrollThreshold: 100,
+  enableVirtualScroll: false,
+  maxVisibleMessages: 100
+};
+
+function escapeHTML(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+class MessageDetailsModal {
+  constructor(getMessage) {
+    this.getMessage = typeof getMessage === 'function' ? getMessage : () => null;
+    this.activeModal = null;
+  }
+
+  show(messageId) {
+    const message = this.getMessage(messageId);
+    if (!message || typeof document === 'undefined') {
+      return;
+    }
+
+    this.close();
+
+    const hopCount = Number.isFinite(message.hops) ? Math.max(0, message.hops) : 0;
+    const routePath = Array.isArray(message.routePath) && message.routePath.length > 0
+      ? message.routePath
+      : [message.type === 'me' ? 'You' : 'Peer'];
+    const arrivalTime = typeof message.arrivalTime === 'number' ? message.arrivalTime : message.receivedAt;
+    const sentTime = typeof message.sentAt === 'number' ? message.sentAt : message.displayAt;
+    const delay = typeof arrivalTime === 'number' && typeof sentTime === 'number'
+      ? Math.max(0, arrivalTime - sentTime)
+      : 0;
+    const latencyEstimate = Math.max(hopCount || routePath.length || 1, 1) * 45;
+
+    const modal = document.createElement('div');
+    modal.className = 'message-details-modal';
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'modal-backdrop';
+    backdrop.addEventListener('click', () => this.close());
+
+    const content = document.createElement('div');
+    content.className = 'modal-content';
+
+    const title = document.createElement('h3');
+    title.innerHTML = '📡 Message Journey';
+
+    content.appendChild(title);
+
+    if (CONFIG.showRoutePath) {
+      const routeSection = document.createElement('div');
+      routeSection.className = 'detail-section';
+
+      const label = document.createElement('label');
+      label.textContent = 'Route taken:';
+      routeSection.appendChild(label);
+
+      const path = document.createElement('div');
+      path.className = 'route-path';
+
+      routePath.forEach((device, index) => {
+        const node = document.createElement('div');
+        node.className = 'route-node';
+
+        const icon = document.createElement('span');
+        icon.className = 'node-icon';
+        icon.textContent = index === 0 ? '📱' : '📡';
+
+        const name = document.createElement('span');
+        name.className = 'node-name';
+        name.textContent = device;
+
+        node.appendChild(icon);
+        node.appendChild(name);
+        path.appendChild(node);
+
+        if (index < routePath.length - 1) {
+          const arrow = document.createElement('span');
+          arrow.className = 'route-arrow';
+          arrow.textContent = '→';
+          path.appendChild(arrow);
+        }
+      });
+
+      routeSection.appendChild(path);
+      content.appendChild(routeSection);
+    }
+
+    const timingSection = document.createElement('div');
+    timingSection.className = 'detail-section';
+
+    const timingLabel = document.createElement('label');
+    timingLabel.textContent = 'Timing:';
+    timingSection.appendChild(timingLabel);
+
+    const timingInfo = document.createElement('div');
+    timingInfo.className = 'timing-info';
+
+    const sentLine = document.createElement('div');
+    sentLine.textContent = `Sent: ${this.formatTime(sentTime)}`;
+    const arrivalLine = document.createElement('div');
+    arrivalLine.textContent = `Arrived: ${this.formatTime(arrivalTime)}`;
+    const delayLine = document.createElement('div');
+    delayLine.textContent = `Delay: ${this.formatDelay(delay)}`;
+
+    timingInfo.appendChild(sentLine);
+    timingInfo.appendChild(arrivalLine);
+    timingInfo.appendChild(delayLine);
+    timingSection.appendChild(timingInfo);
+    content.appendChild(timingSection);
+
+    const statsSection = document.createElement('div');
+    statsSection.className = 'detail-section';
+
+    const statsLabel = document.createElement('label');
+    statsLabel.textContent = 'Network stats:';
+    statsSection.appendChild(statsLabel);
+
+    const stats = document.createElement('div');
+    stats.className = 'network-stats';
+
+    const hopsStat = document.createElement('span');
+    hopsStat.className = 'stat';
+    hopsStat.textContent = `🔄 ${hopCount || routePath.length || 1} hops`;
+
+    const stateStat = document.createElement('span');
+    stateStat.className = 'stat';
+    stateStat.textContent = `📊 ${message.state || 'settled'}`;
+
+    const latencyStat = document.createElement('span');
+    latencyStat.className = 'stat';
+    latencyStat.textContent = `⚡ ${latencyEstimate}ms latency`;
+
+    stats.appendChild(hopsStat);
+    stats.appendChild(stateStat);
+    stats.appendChild(latencyStat);
+
+    if (message.vectorClock && typeof message.vectorClock === 'object') {
+      const vectorEntries = Object.entries(message.vectorClock);
+      if (vectorEntries.length > 0) {
+        const clockStat = document.createElement('span');
+        clockStat.className = 'stat';
+        const clockSegments = vectorEntries
+          .map(([actor, value]) => `${escapeHTML(actor)}:${value}`)
+          .join(' • ');
+        clockStat.textContent = `🧭 ${clockSegments}`;
+        stats.appendChild(clockStat);
+      }
+    }
+
+    statsSection.appendChild(stats);
+    content.appendChild(statsSection);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'modal-close';
+    closeBtn.type = 'button';
+    closeBtn.textContent = 'Done';
+    closeBtn.addEventListener('click', () => this.close());
+    content.appendChild(closeBtn);
+
+    modal.appendChild(backdrop);
+    modal.appendChild(content);
+
+    document.body.appendChild(modal);
+
+    requestAnimationFrame(() => {
+      modal.classList.add('show');
+    });
+
+    this.activeModal = modal;
+  }
+
+  close() {
+    if (!this.activeModal) {
+      return;
+    }
+
+    const modal = this.activeModal;
+    modal.classList.remove('show');
+    setTimeout(() => {
+      if (modal.parentElement) {
+        modal.parentElement.removeChild(modal);
+      }
+    }, 200);
+    this.activeModal = null;
+  }
+
+  formatTime(value) {
+    if (!Number.isFinite(value)) {
+      return 'Unknown';
+    }
+    return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  formatDelay(value) {
+    if (!Number.isFinite(value)) {
+      return '—';
+    }
+    if (value < 1000) {
+      return `${value}ms`;
+    }
+    const seconds = value / 1000;
+    if (seconds < 60) {
+      return `${seconds.toFixed(1)}s`;
+    }
+    const minutes = Math.floor(seconds / 60);
+    const remaining = seconds % 60;
+    return remaining > 0 ? `${minutes}m ${remaining.toFixed(1)}s` : `${minutes}m`;
+  }
+}
+
+class NetworkStatusBar {
+  constructor(element) {
+    this.element = element || null;
+    this.stats = {
+      peers: 0,
+      pendingMessages: 0,
+      averageHops: 0
+    };
+  }
+
+  setPeers(count) {
+    const normalized = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+    if (this.stats.peers !== normalized) {
+      this.stats.peers = normalized;
+      this.render();
+    }
+  }
+
+  setPendingMessages(count) {
+    const normalized = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+    if (this.stats.pendingMessages !== normalized) {
+      this.stats.pendingMessages = normalized;
+      this.render();
+    }
+  }
+
+  setAverageHops(value) {
+    const normalized = Number.isFinite(value) ? Math.max(0, value) : 0;
+    if (Math.abs(this.stats.averageHops - normalized) > 0.05) {
+      this.stats.averageHops = normalized;
+      this.render();
+      return;
+    }
+    if (normalized === 0 && this.stats.averageHops !== 0) {
+      this.stats.averageHops = 0;
+      this.render();
+    }
+  }
+
+  getStatusClass() {
+    if (this.stats.peers <= 0) {
+      return 'offline';
+    }
+    if (this.stats.pendingMessages > 0) {
+      return 'degraded';
+    }
+    return 'online';
+  }
+
+  render() {
+    if (!this.element) {
+      return;
+    }
+
+    const peersLabel = `${this.stats.peers} ${this.stats.peers === 1 ? 'peer' : 'peers'}`;
+    const metrics = [];
+    if (this.stats.averageHops > 0) {
+      metrics.push(`<span class="average-hops">${this.stats.averageHops.toFixed(1)} avg hops</span>`);
+    }
+    if (this.stats.pendingMessages > 0) {
+      metrics.push(`
+        <div class="reorder-indicator">
+          <span class="reorder-icon">🔄</span>
+          <span>${this.stats.pendingMessages} settling...</span>
+        </div>
+      `);
+    }
+
+    this.element.innerHTML = `
+      <div class="network-status-mini">
+        <div class="connection-state">
+          <span class="status-dot ${this.getStatusClass()}"></span>
+          <span>${peersLabel}</span>
+        </div>
+        <div class="network-metrics">
+          ${metrics.join(' ')}
+        </div>
+      </div>
+    `;
+  }
+}
+
+class MessageTimeline {
+  constructor(container, config = CONFIG) {
+    this.messagesContainer = container || null;
+    this.config = config;
+  }
+
+  setContainer(container) {
+    this.messagesContainer = container;
+  }
+
+  isNearBottom() {
+    const container = this.messagesContainer;
+    if (!container) {
+      return true;
+    }
+    const threshold = Number.isFinite(this.config?.autoScrollThreshold)
+      ? this.config.autoScrollThreshold
+      : 100;
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    return scrollHeight - scrollTop - clientHeight < threshold;
+  }
+
+  enrichMessages(messages) {
+    if (!Array.isArray(messages)) {
+      return [];
+    }
+
+    const entries = messages.map((msg, index) => {
+      const displayAt = typeof msg.displayAt === 'number' ? msg.displayAt : msg.at;
+      const arrivalTime = typeof msg.arrivalTime === 'number'
+        ? msg.arrivalTime
+        : (typeof msg.receivedAt === 'number' ? msg.receivedAt : displayAt);
+      const messageText = typeof msg.text === 'string'
+        ? msg.text
+        : (typeof msg.content === 'string' ? msg.content : '');
+      return {
+        id: msg.id,
+        text: messageText,
+        type: msg.type === 'me' ? 'me' : 'them',
+        at: msg.at,
+        displayAt,
+        receivedAt: typeof msg.receivedAt === 'number' ? msg.receivedAt : displayAt,
+        sentAt: typeof msg.sentAt === 'number' ? msg.sentAt : msg.at,
+        sentAtLocal: typeof msg.sentAtLocal === 'number' ? msg.sentAtLocal : msg.sentAt,
+        localOrder: msg.localOrder || 0,
+        hops: Number.isFinite(msg.hops) ? msg.hops : 1,
+        routePath: Array.isArray(msg.routePath) ? [...msg.routePath] : [],
+        arrivalTime,
+        state: msg.state || (msg.type === 'me' ? 'settled' : 'settled'),
+        vectorClock: msg.vectorClock && typeof msg.vectorClock === 'object' ? { ...msg.vectorClock } : {},
+        arrivalIndex: Number.isFinite(msg.arrivalIndex) ? msg.arrivalIndex : index,
+        originalPosition: Number.isFinite(msg.originalPosition) ? msg.originalPosition : null,
+        isOutOfOrder: Boolean(msg.isOutOfOrder),
+        sequence: Number.isFinite(msg.sequence) ? msg.sequence : null,
+        editedAt: Number.isFinite(msg.editedAt) ? msg.editedAt : null
+      };
+    });
+
+    const arrivalOrder = [...entries].sort((a, b) => {
+      const timeA = Number.isFinite(a.arrivalTime) ? a.arrivalTime : a.receivedAt || 0;
+      const timeB = Number.isFinite(b.arrivalTime) ? b.arrivalTime : b.receivedAt || 0;
+      if (timeA !== timeB) {
+        return timeA - timeB;
+      }
+      return (a.arrivalIndex ?? 0) - (b.arrivalIndex ?? 0);
+    });
+
+    arrivalOrder.forEach((entry, idx) => {
+      entry.arrivalOrderIndex = idx;
+    });
+
+    const temporalOrder = [...entries].sort((a, b) => {
+      const timeA = Number.isFinite(a.displayAt) ? a.displayAt : a.at || 0;
+      const timeB = Number.isFinite(b.displayAt) ? b.displayAt : b.at || 0;
+      if (timeA !== timeB) {
+        return timeA - timeB;
+      }
+      const sentDiff = (a.sentAt ?? timeA) - (b.sentAt ?? timeB);
+      if (sentDiff !== 0) {
+        return sentDiff;
+      }
+      return (a.localOrder ?? 0) - (b.localOrder ?? 0);
+    });
+
+    temporalOrder.forEach((entry, idx) => {
+      entry.temporalOrderIndex = idx;
+    });
+
+    entries.forEach((entry) => {
+      const arrivalIndex = entry.arrivalOrderIndex ?? entry.arrivalIndex ?? 0;
+      const temporalIndex = entry.temporalOrderIndex ?? arrivalIndex;
+      const outOfOrder = arrivalIndex > temporalIndex || entry.isOutOfOrder;
+      entry.arrivalOrderIndex = arrivalIndex;
+      entry.temporalOrderIndex = temporalIndex;
+      entry.isOutOfOrder = outOfOrder;
+      if (outOfOrder && entry.originalPosition == null) {
+        entry.originalPosition = arrivalIndex;
+      }
+      if (!outOfOrder && entry.state === 'settling') {
+        entry.state = 'settled';
+      }
+      if (!entry.state) {
+        entry.state = outOfOrder ? 'settling' : 'settled';
+      }
+    });
+
+    return entries;
+  }
+}
+
 const OUTGOING_BUFFER_THRESHOLD = 32;
 const BUFFER_WARNING_COOLDOWN_MS = 2000;
 const RATE_LIMIT_WARNING_COOLDOWN_MS = 1500;
@@ -101,7 +521,6 @@ class SecureChat {
         this.encryptedCache = new Map();
         this.lastEncryptedHex = '';
         this.outgoingMessageNumber = 1;
-        this.expectedIncomingMessageNumber = 1;
         this.keyRotationInterval = 10;
         this.lastRotationMessageCount = 0;
         this.messageRateLimit = {
@@ -161,7 +580,22 @@ class SecureChat {
           }
         });
 
+        this.timeline = new MessageTimeline(DOM.chatMessages, CONFIG);
+        this.messageDetailCache = new Map();
+        this.messageDetailsModal = new MessageDetailsModal((id) => this.messageDetailCache.get(id) || null);
+        this.networkStatusBar = new NetworkStatusBar(DOM.networkStatus);
+        this.seenIncomingSequences = new Set();
+        this.highestIncomingSequence = 0;
+        this.totalReceivedMessages = 0;
+        this.reorderNoticeTimers = new Map();
+
         this.dom = DOM;
+        this.applyVisualConfig();
+        this.timeline.setContainer(DOM.chatMessages);
+        this.networkStatusBar?.render();
+        this.updateNetworkPeers(0);
+        this.updatePendingMessages(0);
+        this.updateAverageHops(0);
         this.initStorage();
         this.renderRoomHistory([]);
         this.checkForSharedLink().catch((error) => {
@@ -230,6 +664,30 @@ class SecureChat {
 
         this.simpleEmailInput.addEventListener('change', persist);
         this.simpleEmailInput.addEventListener('blur', persist);
+      }
+
+      applyVisualConfig() {
+        if (typeof document === 'undefined') {
+          return;
+        }
+        const root = document.documentElement;
+        if (!root) {
+          return;
+        }
+        root.style.setProperty('--reorder-fade-delay', `${CONFIG.reorderBadgeFadeDelay}ms`);
+        root.style.setProperty('--reorder-glow-duration', `${CONFIG.reorderGlowDuration}ms`);
+      }
+
+      updateNetworkPeers(count) {
+        this.networkStatusBar?.setPeers(count);
+      }
+
+      updatePendingMessages(count) {
+        this.networkStatusBar?.setPendingMessages(count);
+      }
+
+      updateAverageHops(value) {
+        this.networkStatusBar?.setAverageHops(value);
       }
 
       decorateInteractiveElement(element, handler) {
@@ -1530,11 +1988,15 @@ This invite can be used only once. Share the link privately.`;
 
       resetMessageCounters() {
         this.outgoingMessageNumber = 1;
-        this.expectedIncomingMessageNumber = 1;
         this.lastRotationMessageCount = 0;
         if (this.messageRateLimit) {
           this.messageRateLimit.timestamps = [];
         }
+        this.seenIncomingSequences?.clear?.();
+        this.highestIncomingSequence = 0;
+        this.totalReceivedMessages = 0;
+        this.reorderNoticeTimers?.clear?.();
+        this.updatePendingMessages(0);
       }
 
       bytesToBase64(bytes) {
@@ -2057,9 +2519,13 @@ This invite can be used only once. Share the link privately.`;
         input.value = '';
         const sentAtLocal = this.getMonotonicTime();
 
+        const sequenceNumber = this.outgoingMessageNumber;
+        const routePath = this.getDefaultRoutePath('me');
+        const hopCount = Math.max(routePath.length - 1, 1);
+
         const envelope = {
           kind: 'data',
-          n: this.outgoingMessageNumber,
+          n: sequenceNumber,
           sentAt: sentAtLocal,
           data: { text }
         };
@@ -2094,7 +2560,15 @@ This invite can be used only once. Share the link privately.`;
               type: 'me',
               sentAt: sentAtLocal,
               sentAtLocal,
-              receivedAt: sentAtLocal
+              receivedAt: sentAtLocal,
+              hops: hopCount,
+              routePath,
+              arrivalTime: sentAtLocal,
+              state: 'settled',
+              vectorClock: this.buildVectorClock(sequenceNumber, this.localIdentity?.id || this.localUserId),
+              sequence: sequenceNumber,
+              originalPosition: null,
+              isOutOfOrder: false
             },
             this.localUserId,
             [`room:${this.roomId}`, `msg:${messageId}`]
@@ -2134,6 +2608,10 @@ This invite can be used only once. Share the link privately.`;
         this.systemOrderCounter = 0;
         this.encryptedCache = new Map();
         this.lastEncryptedHex = '';
+        this.messageDetailCache?.clear?.();
+        this.reorderNoticeTimers?.clear?.();
+        this.updatePendingMessages(0);
+        this.updateAverageHops(0);
         if (this.systemAnnouncements) {
           this.systemAnnouncements.textContent = '';
         }
@@ -2146,22 +2624,32 @@ This invite can be used only once. Share the link privately.`;
           return;
         }
 
+        this.timeline.setContainer(container);
+        const shouldStick = this.timeline.isNearBottom();
+
         this.currentMessages = Array.isArray(messages) ? messages : [];
 
-        const messageEntries = this.currentMessages.map((msg) => ({
+        const enriched = this.timeline.enrichMessages(this.currentMessages);
+        const messageEntries = enriched.map((entry) => ({
+          ...entry,
           kind: 'message',
-          id: msg.id,
-          text: msg.content,
-          type: msg.type === 'me' ? 'me' : 'them',
-          at: msg.displayAt ?? msg.at,
-          displayAt: msg.displayAt ?? msg.at,
-          receivedAt: msg.receivedAt ?? msg.displayAt ?? msg.at,
-          sentAt: msg.sentAt ?? msg.at,
-          sentAtLocal: msg.sentAtLocal ?? msg.sentAt ?? msg.at,
-          localOrder: msg.localOrder || 0,
-          encrypted: this.encryptedCache.get(msg.id) || null,
-          editedAt: msg.editedAt
+          encrypted: this.encryptedCache.get(entry.id) || null
         }));
+
+        const now = Date.now();
+        if (!this.reorderNoticeTimers) {
+          this.reorderNoticeTimers = new Map();
+        }
+        for (const [id, expiry] of this.reorderNoticeTimers) {
+          if (expiry <= now) {
+            this.reorderNoticeTimers.delete(id);
+          }
+        }
+        messageEntries.forEach((entry) => {
+          if (entry.isOutOfOrder) {
+            this.reorderNoticeTimers.set(entry.id, now + CONFIG.reorderBadgeFadeDelay);
+          }
+        });
 
         const combined = [...messageEntries, ...this.systemLog];
         combined.sort((a, b) => {
@@ -2184,6 +2672,16 @@ This invite can be used only once. Share the link privately.`;
 
         container.innerHTML = '';
 
+        this.messageDetailCache = new Map();
+        const totalHops = messageEntries.reduce((sum, entry) => sum + (entry.hops || 0), 0);
+        const averageHops = messageEntries.length > 0 ? totalHops / messageEntries.length : 0;
+        this.updateAverageHops(averageHops);
+        this.updatePendingMessages(this.reorderNoticeTimers.size);
+
+        messageEntries.forEach((entry) => {
+          this.messageDetailCache.set(entry.id, { ...entry });
+        });
+
         combined.forEach((entry) => {
           let element = null;
 
@@ -2204,11 +2702,13 @@ This invite can be used only once. Share the link privately.`;
           }
         });
 
-        container.scrollTop = container.scrollHeight;
+        if (shouldStick) {
+          container.scrollTop = container.scrollHeight;
+        }
       }
 
       createPlainMessageElement(entry) {
-        const { text, type, receivedAt, displayAt } = entry;
+        const { text, type, displayAt } = entry;
         const message = document.createElement('div');
         message.className = `message ${type}`;
 
@@ -2219,16 +2719,41 @@ This invite can be used only once. Share the link privately.`;
         textEl.className = 'message-text';
         textEl.textContent = text;
 
-        const timeEl = document.createElement('div');
-        timeEl.className = 'message-time';
-        const shownTime = typeof receivedAt === 'number' ? receivedAt : displayAt;
-        timeEl.textContent = this.formatTimestamp(shownTime);
+        const meta = document.createElement('div');
+        meta.className = 'message-time message-meta';
+
+        const timestamp = document.createElement('span');
+        timestamp.className = 'timestamp';
+        const shownTime = Number.isFinite(displayAt) ? displayAt : Date.now();
+        timestamp.textContent = this.formatTimestamp(shownTime);
+
+        const stateDots = document.createElement('span');
+        stateDots.className = 'state-dots';
+        stateDots.textContent = this.getMessageStateDots(entry.state);
+        stateDots.setAttribute('aria-label', `Message ${entry.state || 'settled'}`);
+
+        meta.appendChild(timestamp);
+        meta.appendChild(stateDots);
 
         content.appendChild(textEl);
-        content.appendChild(timeEl);
+        content.appendChild(meta);
         message.appendChild(content);
 
-        return message;
+        return this.applyMessageMetadata(message, entry);
+      }
+
+      getMessageStateDots(state) {
+        switch (state) {
+          case 'sending':
+            return '●○○';
+          case 'propagating':
+            return '●●○';
+          case 'settling':
+            return '●●●';
+          case 'settled':
+          default:
+            return '●●●';
+        }
       }
 
       createEncryptedMessageElement(entry) {
@@ -2288,7 +2813,7 @@ This invite can be used only once. Share the link privately.`;
         content.appendChild(wrapper);
         message.appendChild(content);
 
-        return message;
+        return this.applyMessageMetadata(message, entry);
       }
 
       createEncryptedPlaceholderElement(entry) {
@@ -2322,7 +2847,101 @@ This invite can be used only once. Share the link privately.`;
         content.appendChild(wrapper);
         message.appendChild(content);
 
+        return this.applyMessageMetadata(message, entry);
+      }
+
+      createReorderBadge(entry) {
+        if (!entry?.id) {
+          return null;
+        }
+        const badge = document.createElement('button');
+        badge.className = 'reorder-badge';
+        badge.type = 'button';
+        const hopCount = Number.isFinite(entry.hops) ? entry.hops : 0;
+        const labelText = CONFIG.showHopCount ? `${hopCount} hops` : 'View route';
+        badge.setAttribute('aria-label', `Message settled out of order via ${labelText}`);
+
+        const icon = document.createElement('span');
+        icon.className = 'badge-icon';
+        icon.textContent = '↑';
+
+        const text = document.createElement('span');
+        text.className = 'badge-text';
+        text.textContent = labelText;
+
+        badge.appendChild(icon);
+        badge.appendChild(text);
+
+        badge.addEventListener('click', (event) => {
+          event.stopPropagation();
+          this.showMessageDetails(entry.id);
+        });
+
+        return badge;
+      }
+
+      applyMessageMetadata(message, entry) {
+        if (!message || !entry) {
+          return message;
+        }
+
+        message.dataset.id = entry.id;
+        if (entry.state) {
+          message.dataset.state = entry.state;
+        }
+        if (Number.isFinite(entry.hops)) {
+          message.dataset.hops = String(entry.hops);
+        }
+        if (Number.isFinite(entry.arrivalOrderIndex)) {
+          message.dataset.arrivalIndex = String(entry.arrivalOrderIndex);
+        }
+        if (Number.isFinite(entry.temporalOrderIndex)) {
+          message.dataset.temporalIndex = String(entry.temporalOrderIndex);
+        }
+        if (Number.isFinite(entry.originalPosition)) {
+          message.dataset.originalPosition = String(entry.originalPosition);
+        }
+
+        if (entry.isOutOfOrder) {
+          message.classList.add('reordered');
+          const badge = this.createReorderBadge(entry);
+          if (badge) {
+            message.insertBefore(badge, message.firstChild);
+          }
+        }
+
         return message;
+      }
+
+      showMessageDetails(messageId) {
+        if (!messageId || !this.messageDetailsModal) {
+          return;
+        }
+        if (!this.messageDetailCache?.has(messageId)) {
+          return;
+        }
+        this.messageDetailsModal.show(messageId);
+      }
+
+      getDefaultRoutePath(type = 'them') {
+        const localName = this.localIdentity?.displayName || 'You';
+        const remoteName = this.remoteIdentity?.displayName || 'Peer';
+        const relay = 'Mesh relay';
+        if (type === 'me') {
+          return CONFIG.showRoutePath ? [localName, relay, remoteName] : [localName, remoteName];
+        }
+        return CONFIG.showRoutePath ? [remoteName, relay, localName] : [remoteName, localName];
+      }
+
+      buildVectorClock(sequence, actorId) {
+        if (!Number.isFinite(sequence)) {
+          return {};
+        }
+        const actor = actorId || this.localIdentity?.id || this.localUserId;
+        if (!actor) {
+          return {};
+        }
+        return { [actor]: sequence };
       }
 
       createSystemMessageElement(entry) {
