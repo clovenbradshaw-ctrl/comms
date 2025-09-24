@@ -90,36 +90,33 @@
             Loading...
           </div>
           
-          <div class="input-group">
-            <label class="input-label">Set Encryption Password</label>
-            <input type="password" id="hostPassword" class="input-field" placeholder="Choose a strong password">
-          </div>
-          
           <button class="btn btn-primary" style="width: 100%;" onclick="App.startHost()">
-            Start Secure Room
+            Generate Secure Invite
           </button>
-          
+
           <div id="shareSection" class="share-section" style="display: none;">
-            <p class="share-note">📤 Share this invite link with your guest. Send the password using a different channel.</p>
-            <div class="share-link" id="shareLink" onclick="App.copyShareLink()" role="button" tabindex="0" aria-label="Copy invite link">
-              Generating link...
-            </div>
-            <button class="btn btn-primary" style="width: 100%; margin-bottom: 1rem;" onclick="App.copyShareLink()">📋 Copy Link</button>
+            <div class="invite-section" id="inviteSection">
+              <h3>🎟️ Secure One-Time Invite</h3>
+              <p>This link works only once and expires in 15 minutes.</p>
 
-            <div class="salt-section">
-              <div class="salt-label">Room Salt (safe to share)</div>
-              <div class="share-link" id="roomSaltDisplay" onclick="App.copyRoomSalt()" role="button" tabindex="0" aria-label="Copy room salt">
-                Generating salt...
+              <div class="invite-link-container">
+                <input id="inviteLink" class="invite-input" readonly value="Generating secure link..." aria-live="polite">
+                <button id="copyInviteBtn" class="btn btn-primary">📋 Copy Secure Link</button>
               </div>
-              <div class="input-hint">The salt is also included in the invite link for convenience.</div>
-              <button class="btn btn-secondary" style="width: 100%;" onclick="App.copyRoomSalt()">📋 Copy Salt</button>
-            </div>
 
-            <div class="simple-setup">
-              <label class="input-label" for="simpleEmail">Simple setup (optional)</label>
-              <input type="email" id="simpleEmail" class="input-field" placeholder="Invite email (leave blank to use device share)">
-              <button class="btn btn-secondary" style="width: 100%;" onclick="App.simpleShareInvite()">✨ Simple Setup: Share Invite</button>
-              <div id="simpleShareStatus" class="simple-status"></div>
+              <div class="security-info">
+                ✅ No passwords needed<br>
+                ✅ Single-use only<br>
+                ✅ Auto-expires<br>
+                ✅ Cryptographically secure
+              </div>
+
+              <div class="simple-setup">
+                <label class="input-label" for="simpleEmail">Simple setup (optional)</label>
+                <input type="email" id="simpleEmail" class="input-field" placeholder="Invite email (leave blank to use device share)">
+                <button class="btn btn-secondary" style="width: 100%;" onclick="App.simpleShareInvite()">✨ Simple Setup: Share Invite</button>
+                <div id="simpleShareStatus" class="simple-status"></div>
+              </div>
             </div>
           </div>
           
@@ -135,28 +132,13 @@
       <div class="setup-screen">
         <div class="setup-card">
           <h2>Join Secure Room</h2>
-          <p style="color: var(--text-secondary); text-align: center; margin-bottom: 1rem;">Enter the room details shared with you</p>
-          
-          <div class="input-group">
-            <label class="input-label">Room Code</label>
-            <input type="text" id="joinCode" class="input-field" placeholder="Paste the shared room code">
-          </div>
+          <p style="color: var(--text-secondary); text-align: center; margin-bottom: 1rem;">Use the secure invite link sent to you</p>
 
-          <div class="input-group">
-            <label class="input-label">Encryption Password</label>
-            <input type="password" id="joinPassword" class="input-field" placeholder="Enter shared password">
-            <div class="input-hint">Verify this password over a different channel.</div>
+          <div class="joining-status">
+            <div class="spinner" id="joinSpinner"></div>
+            <p id="joinStatus" tabindex="-1">Claiming your secure seat...</p>
+            <p class="small" id="joinStatusDetail">Verifying one-time token...</p>
           </div>
-
-          <div class="input-group">
-            <label class="input-label">Room Salt</label>
-            <input type="text" id="joinSalt" class="input-field" placeholder="Paste the room salt or open the invite link">
-            <div class="input-hint">The invite link fills this automatically. Salt can be shared publicly.</div>
-          </div>
-          
-          <button class="btn btn-primary" style="width: 100%;" onclick="App.startJoin()">
-            Join Room
-          </button>
           
           <button class="btn btn-secondary" style="width: 100%; margin-top: 1rem;" onclick="App.showWelcome()">
             Back
