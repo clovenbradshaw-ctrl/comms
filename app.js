@@ -31,6 +31,10 @@ const DOM = {
   schemaToggle: document.getElementById('schemaToggle')
 };
 
+const OUTGOING_BUFFER_THRESHOLD = 32;
+const BUFFER_WARNING_COOLDOWN_MS = 2000;
+const RATE_LIMIT_WARNING_COOLDOWN_MS = 1500;
+
 for (const [name, element] of Object.entries(DOM)) {
   if (!element) {
     console.warn(`Missing DOM element: ${name}`);
@@ -70,6 +74,14 @@ class SecureChat {
         this.sentKeyExchange = false;
         this.latestFingerprint = '';
         this.lastAnnouncedEpoch = -1;
+        this.devToolsEnabled = this.isDevEnvironment();
+        this.backpressureThreshold = OUTGOING_BUFFER_THRESHOLD;
+        this.bufferWarningCooldown = BUFFER_WARNING_COOLDOWN_MS;
+        this.lastBufferWarningAt = 0;
+        this.rateLimitWarningCooldown = RATE_LIMIT_WARNING_COOLDOWN_MS;
+        this.lastRateLimitWarningAt = 0;
+        this.toastContainer = null;
+        this.handleSchemaRoute = null;
         this.cryptoUpdates = CryptoManager.onUpdated((update) => {
           const fingerprint = update?.fingerprint || '';
           this.latestFingerprint = fingerprint;
@@ -100,6 +112,7 @@ class SecureChat {
         this.updateStatus('Disconnected', '');
         this.setWaitingBanner(false, '');
         this.updateFingerprintDisplay(null);
+        this.initDevRoutes();
       }
 
       initEventListeners() {
@@ -143,6 +156,50 @@ class SecureChat {
 
         this.simpleEmailInput.addEventListener('change', persist);
         this.simpleEmailInput.addEventListener('blur', persist);
+      }
+
+      isDevEnvironment() {
+        if (typeof window === 'undefined') {
+          return false;
+        }
+
+        const { protocol, hostname } = window.location;
+        if (protocol === 'file:') {
+          return true;
+        }
+
+        if (!hostname) {
+          return false;
+        }
+
+        const normalized = hostname.toLowerCase();
+        if (['localhost', '127.0.0.1', '0.0.0.0'].includes(normalized)) {
+          return true;
+        }
+
+        return normalized.endsWith('.local');
+      }
+
+      initDevRoutes() {
+        if (!this.devToolsEnabled || typeof window === 'undefined') {
+          return;
+        }
+
+        if (typeof this.handleSchemaRoute === 'function') {
+          window.removeEventListener('hashchange', this.handleSchemaRoute);
+        }
+
+        this.handleSchemaRoute = () => {
+          if (window.location.hash === '#schema') {
+            this.showSchemaView();
+          }
+        };
+
+        window.addEventListener('hashchange', this.handleSchemaRoute);
+
+        if (window.location.hash === '#schema') {
+          this.showSchemaView();
+        }
       }
 
       getStoredInviteEmail() {
@@ -1072,13 +1129,13 @@ Password: [share securely via a different channel]
         limits.timestamps = limits.timestamps.filter((t) => t > oneMinuteAgo);
 
         if (limits.timestamps.length >= limits.maxPerMinute) {
-          return { allowed: false, reason: 'Rate limit: Maximum 30 messages per minute' };
+          return { allowed: false, reason: 'Limit reached: 30 messages per minute' };
         }
 
         const twoSecondsAgo = now - 2000;
         const recent = limits.timestamps.filter((t) => t > twoSecondsAgo);
         if (recent.length >= limits.maxBurst) {
-          return { allowed: false, reason: 'Slow down! Too many messages at once' };
+          return { allowed: false, reason: 'Slow down' };
         }
 
         return { allowed: true };
@@ -1097,17 +1154,37 @@ Password: [share securely via a different channel]
 
         if (!CryptoManager.getCurrentKey()) {
           this.addSystemMessage('⚠️ Encryption key not ready yet.');
+          this.showToast('Encryption key not ready yet.', 'warning');
           return;
         }
 
         if (text.length > MAX_MESSAGE_SIZE) {
-          this.addSystemMessage(`⚠️ Message too long (max ${MAX_MESSAGE_SIZE} characters)`);
+          const warning = `Message too long (max ${MAX_MESSAGE_SIZE} characters)`;
+          this.addSystemMessage(`⚠️ ${warning}`);
+          this.showToast(warning, 'warning');
           return;
         }
 
         const rateCheck = this.canSendMessage();
         if (!rateCheck.allowed) {
-          this.addSystemMessage(`⚠️ ${rateCheck.reason}`);
+          const now = Date.now();
+          if (now - this.lastRateLimitWarningAt > this.rateLimitWarningCooldown) {
+            this.addSystemMessage(`⚠️ ${rateCheck.reason}`);
+            this.showToast(rateCheck.reason, 'warning');
+            this.lastRateLimitWarningAt = now;
+          }
+          return;
+        }
+
+        const bufferSize = Number(this.conn?.bufferSize ?? 0);
+        if (bufferSize > this.backpressureThreshold) {
+          const now = Date.now();
+          if (now - this.lastBufferWarningAt > this.bufferWarningCooldown) {
+            const notice = '📦 sending… Connection is catching up. Message not sent.';
+            this.addSystemMessage(notice);
+            this.showToast('Connection is busy — try again shortly.', 'warning');
+            this.lastBufferWarningAt = now;
+          }
           return;
         }
 
@@ -1127,6 +1204,7 @@ Password: [share securely via a different channel]
         } catch (error) {
           console.error('Failed to encrypt message.', error);
           this.addSystemMessage('⚠️ Unable to encrypt message');
+          this.showToast('Unable to encrypt message', 'error');
           return;
         }
 
@@ -1392,6 +1470,49 @@ Password: [share securely via a different channel]
         this.encryptedCache.set(messageId, payload);
       }
 
+      ensureToastContainer() {
+        if (this.toastContainer && document.body.contains(this.toastContainer)) {
+          return this.toastContainer;
+        }
+
+        const container = document.createElement('div');
+        container.className = 'toast-container';
+        document.body.appendChild(container);
+        this.toastContainer = container;
+        return container;
+      }
+
+      showToast(message, tone = 'info', duration = 4000) {
+        if (!message || typeof document === 'undefined') {
+          return;
+        }
+
+        const container = this.ensureToastContainer();
+        if (!container) {
+          return;
+        }
+
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${tone}`;
+        toast.textContent = message;
+        container.appendChild(toast);
+
+        requestAnimationFrame(() => {
+          toast.classList.add('visible');
+        });
+
+        setTimeout(() => {
+          toast.classList.remove('visible');
+          setTimeout(() => {
+            toast.remove();
+            if (container.childElementCount === 0 && this.toastContainer === container) {
+              container.remove();
+              this.toastContainer = null;
+            }
+          }, 300);
+        }, Math.max(1000, duration || 0));
+      }
+
       addSystemMessage(text) {
         this.systemLog.push({
           kind: 'system',
@@ -1408,6 +1529,18 @@ Password: [share securely via a different channel]
           } catch (error) {
             console.warn('Storage not ready for schema view.', error);
           }
+        }
+
+        let verificationPassed = null;
+        let verificationDetails = null;
+        if (typeof this.storage?.verify === 'function') {
+          try {
+            verificationPassed = await this.storage.verify();
+          } catch (error) {
+            console.warn('Storage verification failed to complete.', error);
+            verificationPassed = false;
+          }
+          verificationDetails = this.storage?.lastVerification || null;
         }
 
         let state = this.storage?.state;
@@ -1440,6 +1573,49 @@ Password: [share securely via a different channel]
         recentEvents.sort((a, b) => (a.at || 0) - (b.at || 0));
         const timelineEvents = recentEvents.slice(-20);
 
+        let verificationBadgeClass = 'pending';
+        let verificationBadgeText = 'Verification unavailable';
+        if (verificationPassed === true) {
+          verificationBadgeClass = 'ok';
+          verificationBadgeText = '✅ Storage verified';
+        } else if (verificationPassed === false) {
+          verificationBadgeClass = 'error';
+          verificationBadgeText = '❌ Verification failed';
+        }
+
+        const summaryParts = [];
+        if (verificationDetails?.totalEvents !== undefined && verificationDetails?.totalEvents !== null) {
+          summaryParts.push(`events: ${verificationDetails.totalEvents}`);
+        }
+        if (verificationDetails?.eventsReplayed !== undefined && verificationDetails?.eventsReplayed !== null) {
+          summaryParts.push(`replay: ${verificationDetails.eventsReplayed}`);
+        }
+        if (verificationDetails?.snapshotAt) {
+          try {
+            const snapshotDate = new Date(verificationDetails.snapshotAt);
+            if (!Number.isNaN(snapshotDate.getTime())) {
+              summaryParts.push(`snapshot: ${snapshotDate.toLocaleTimeString()}`);
+            }
+          } catch (error) {
+            // Ignore invalid date formatting
+          }
+        }
+        if (Array.isArray(verificationDetails?.mismatches) && verificationDetails.mismatches.length > 0) {
+          summaryParts.push(`issues: ${verificationDetails.mismatches.join(', ')}`);
+        }
+        const verificationSummaryText = summaryParts.join(' · ');
+
+        let shouldResetHash = false;
+        if (this.devToolsEnabled && typeof window !== 'undefined') {
+          const currentHash = window.location.hash;
+          if (currentHash !== '#schema') {
+            window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.search}#schema`);
+            shouldResetHash = true;
+          } else {
+            shouldResetHash = true;
+          }
+        }
+
         const existingModal = document.querySelector('.schema-modal');
         if (existingModal) {
           existingModal.remove();
@@ -1455,6 +1631,10 @@ Password: [share securely via a different channel]
           <div class="schema-content">
             <div class="schema-header">
               <h2>Data Architecture</h2>
+              <div class="schema-status">
+                <span class="schema-badge">Verifying…</span>
+                <small class="schema-summary"></small>
+              </div>
               <button type="button" aria-label="Close schema view">✕</button>
             </div>
             <div class="schema-section">
@@ -1516,6 +1696,23 @@ Current Key: ${CryptoManager.getCurrentKey() ? 'Loaded ✓' : 'Not set ✗'}</pr
           </div>
         `;
 
+        const badgeEl = modal.querySelector('.schema-badge');
+        if (badgeEl) {
+          badgeEl.classList.add(verificationBadgeClass);
+          badgeEl.textContent = verificationBadgeText;
+        }
+
+        const summaryEl = modal.querySelector('.schema-summary');
+        if (summaryEl) {
+          if (verificationSummaryText) {
+            summaryEl.textContent = verificationSummaryText;
+            summaryEl.style.display = 'inline';
+          } else {
+            summaryEl.textContent = '';
+            summaryEl.style.display = 'none';
+          }
+        }
+
         const roomsPre = modal.querySelector('#schema-rooms pre');
         if (roomsPre) {
           roomsPre.textContent = JSON.stringify(snapshot.rooms || [], null, 2);
@@ -1572,14 +1769,21 @@ Current Key: ${CryptoManager.getCurrentKey() ? 'Loaded ✓' : 'Not set ✗'}</pr
           }
         }
 
+        const handleClose = () => {
+          modal.remove();
+          if (shouldResetHash && typeof window !== 'undefined') {
+            window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.search}`);
+          }
+        };
+
         const closeBtn = modal.querySelector('.schema-header button');
         if (closeBtn) {
-          closeBtn.addEventListener('click', () => modal.remove());
+          closeBtn.addEventListener('click', handleClose);
         }
 
         modal.addEventListener('click', (event) => {
           if (event.target === modal) {
-            modal.remove();
+            handleClose();
           }
         });
 
