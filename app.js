@@ -547,6 +547,7 @@ class SecureChat {
         this.inviteManagerReady = this.inviteManager?.ready || Promise.resolve();
         this.pendingInvite = null;
         this.roomMembers = typeof RoomMembers === 'function' ? new RoomMembers(DOM.memberSidebar) : null;
+        this.roomMembers?.setViewerRole(this.isHost);
         this.nameGenerator = typeof SecureNameGenerator === 'function' ? new SecureNameGenerator() : null;
         this.identityManager = null;
         this.localIdentity = null;
@@ -1210,10 +1211,7 @@ class SecureChat {
         this.identityManager = null;
         this.pendingStoredIdentity = null;
         this.clearIdentityAnnouncement();
-        if (this.roomMembers) {
-          this.roomMembers.members.clear();
-          this.roomMembers.render();
-        }
+        this.roomMembers?.reset?.();
       }
 
       markRemoteOffline() {
@@ -1534,6 +1532,14 @@ This invite can be used only once. Share the link privately.`;
 
         this.currentInvite = result;
         this.currentShareLink = result.url;
+        const expiresAt = result.payload?.expiresAt;
+        const seatId = seat?.seatId || result.payload?.seatId;
+        this.pendingInvite = { id: seatId, expiresAt };
+        this.roomMembers?.setActiveInvite?.({
+          id: seatId,
+          expiresAt,
+          url: result.url
+        });
         return result.url;
       }
 
@@ -1556,6 +1562,7 @@ This invite can be used only once. Share the link privately.`;
         } else {
           inviteInput.value = 'Generating secure link...';
           delete inviteInput.dataset.link;
+          this.roomMembers?.clearActiveInvites?.();
         }
       }
 
@@ -1609,11 +1616,54 @@ This invite can be used only once. Share the link privately.`;
         this.updateInviteLink(link);
         this.updateSimpleShareStatus('');
         this.setWaitingBanner(true, link, bannerMessage);
+        this.pendingInvite = { id: newSeat.seatId, expiresAt: newSeat.expiresAt };
+        this.roomMembers?.setActiveInvite?.({
+          id: newSeat.seatId,
+          expiresAt: newSeat.expiresAt,
+          url: link
+        });
         if (announce) {
           this.addSystemMessage('✨ Generated a fresh secure invite link.');
         }
 
         return link;
+      }
+
+      async cancelActiveInvite(inviteId = null) {
+        if (!this.isHost) {
+          return;
+        }
+
+        try {
+          const replacementSeat = await SecureInvite.generateSeat();
+          const saltBytes = SecureInvite.fromBase64Url(replacementSeat.seatId);
+          if (!(saltBytes instanceof Uint8Array)) {
+            throw new Error('Invalid seat salt for cancellation.');
+          }
+
+          this.seats.guest = { ...replacementSeat, claimed: false };
+          CryptoManager.setRoomSalt(saltBytes);
+          this.roomSalt = CryptoManager.getRoomSalt();
+          this.roomSaltBase64 = this.bytesToBase64(this.roomSalt);
+          await CryptoManager.loadStaticKeyFromSeat(replacementSeat.secretKey, replacementSeat.seatId);
+        } catch (error) {
+          console.error('Failed to rotate invite during cancellation.', error);
+          this.addSystemMessage('⚠️ Unable to fully cancel the invite. Generating a new one is recommended.');
+        }
+
+        this.currentInvite = null;
+        this.pendingInvite = null;
+        this.currentShareLink = '';
+        this.updateInviteLink('');
+        this.roomMembers?.clearActiveInvites?.();
+        this.setWaitingBanner(false, '');
+        this.updateSimpleShareStatus('');
+
+        if (inviteId) {
+          this.addSystemMessage(`🚫 Invite ${inviteId} cancelled.`);
+        } else {
+          this.addSystemMessage('🚫 Active invite cancelled.');
+        }
       }
 
       async copyShareLink(targetId = 'inviteLink') {
@@ -1817,6 +1867,7 @@ This invite can be used only once. Share the link privately.`;
         }
 
         this.subscribeToMessages(this.roomId);
+        this.roomMembers?.setViewerRole?.(this.isHost);
 
         this.prepareIdentity().catch((error) => {
           console.warn('Failed to prepare identity for room.', error);
@@ -2344,6 +2395,7 @@ This invite can be used only once. Share the link privately.`;
       // Peer Connection
       async startHost() {
         this.isHost = true;
+        this.roomMembers?.setViewerRole?.(true);
         if (!this.roomId) {
           this.roomId = this.generateRoomId();
         }
@@ -2428,6 +2480,7 @@ This invite can be used only once. Share the link privately.`;
 
         this.roomId = invite.roomId;
         this.isHost = false;
+        this.roomMembers?.setViewerRole?.(false);
         this.currentShareLink = '';
         this.seats = { host: null, guest: { ...invite, claimed: true } };
         this.resetConversationState();
@@ -3362,6 +3415,7 @@ Current Key: ${CryptoManager.getCurrentKey() ? 'Loaded ✓' : 'Not set ✗'}</pr
         this.setWaitingBanner(false, '', 'Share the secure invite link below to bring someone into this room.');
         this.currentShareLink = '';
         this.isHost = false;
+        this.roomMembers?.setViewerRole?.(false);
         this.roomSalt = null;
         this.roomSaltBase64 = '';
         this.pendingRoomSalt = null;
@@ -3376,6 +3430,7 @@ Current Key: ${CryptoManager.getCurrentKey() ? 'Loaded ✓' : 'Not set ✗'}</pr
         this.resetIdentityState();
 
         this.updateInviteLink('');
+        this.roomMembers?.clearActiveInvites?.();
         this.updateSimpleShareStatus('');
         this.updateFingerprintDisplay(null);
 
