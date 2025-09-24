@@ -71,9 +71,8 @@
           </div>
 
           <!-- Room History -->
-          <div id="roomHistory" class="room-history" style="display:none;">
-            <div class="history-title">Recent Rooms</div>
-            <div id="historyItems" class="history-items"></div>
+          <div id="roomHistory" class="room-history">
+            <div id="roomHistoryContent"></div>
           </div>
         </div>
       </div>
@@ -265,6 +264,8 @@
       </div>
     </div>
   </div>
+
+  <div id="reentryContainer" hidden></div>
 
   <!-- Load PeerJS -->
   <script src="https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js"></script>

@@ -20,7 +20,7 @@ const DOM = {
   chatScreen: document.getElementById('chatScreen'),
   currentRoom: document.getElementById('currentRoom'),
   roomHistory: document.getElementById('roomHistory'),
-  historyItems: document.getElementById('historyItems'),
+  roomHistoryContent: document.getElementById('roomHistoryContent'),
   fingerprintDisplay: document.getElementById('fingerprintDisplay'),
   fingerprintCode: document.getElementById('fingerprintCode'),
   statusText: document.getElementById('statusText'),
@@ -48,7 +48,8 @@ const DOM = {
   identityHint: document.getElementById('identityHint'),
   identityUseNew: document.getElementById('identityUseNew'),
   identityError: document.getElementById('identityError'),
-  identitySubmitBtn: document.getElementById('identitySubmitBtn')
+  identitySubmitBtn: document.getElementById('identitySubmitBtn'),
+  reentryContainer: document.getElementById('reentryContainer')
 };
 
 const DEFAULT_FEATURE_FLAGS = {
@@ -91,6 +92,692 @@ function escapeHTML(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+class RoomURLManager {
+  constructor(app) {
+    this.app = app;
+    this.routes = {
+      room: /^#\/?room\/([a-z0-9-]+)$/i,
+      invite: /^#\/?room\/([a-z0-9-]+)\/invite\/([A-Za-z0-9_-]+)$/i,
+      shortInvite: /^#\/?j\/(.+)$/i,
+      legacyJoin: /^#\/?join\/([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)/i,
+      home: /^#?\/?$/
+    };
+  }
+
+  start() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const handler = () => this.handleNavigation();
+
+    window.addEventListener('hashchange', handler);
+    window.addEventListener('popstate', handler);
+    window.addEventListener('DOMContentLoaded', handler, { once: true });
+
+    this.handleNavigation();
+  }
+
+  generateRoomURL(roomId, options = {}) {
+    if (!roomId || typeof window === 'undefined') {
+      return '';
+    }
+
+    const origin = window.location.origin || '';
+    const path = window.location.pathname || '';
+    const base = `${origin}${path.replace(/\/$/, '')}#/room/${roomId}`;
+
+    if (options.passwordHint) {
+      return `${base}?pwd=${encodeURIComponent(options.passwordHint)}`;
+    }
+
+    return base;
+  }
+
+  parseURL() {
+    if (typeof window === 'undefined') {
+      return { type: 'home' };
+    }
+
+    const raw = window.location.hash || '#/';
+    const queryIndex = raw.indexOf('?');
+    const hash = queryIndex >= 0 ? raw.slice(0, queryIndex) : raw;
+    const query = queryIndex >= 0 ? raw.slice(queryIndex + 1) : '';
+    const params = new URLSearchParams(query);
+    const normalized = hash.replace(/\/$/, '').toLowerCase();
+
+    const inviteMatch = hash.match(this.routes.invite);
+    if (inviteMatch) {
+      return {
+        type: 'invite',
+        roomId: inviteMatch[1],
+        inviteToken: inviteMatch[2],
+        params
+      };
+    }
+
+    const roomMatch = hash.match(this.routes.room);
+    if (roomMatch) {
+      return {
+        type: 'room',
+        roomId: roomMatch[1],
+        params
+      };
+    }
+
+    const shortInvite = hash.match(this.routes.shortInvite);
+    if (shortInvite) {
+      return {
+        type: 'encodedInvite',
+        token: decodeURIComponent(shortInvite[1] || '')
+      };
+    }
+
+    const legacy = hash.match(this.routes.legacyJoin);
+    if (legacy) {
+      return {
+        type: 'legacyInvite',
+        roomId: legacy[1],
+        seatId: legacy[2],
+        secretKey: legacy[3]
+      };
+    }
+
+    if (this.routes.home.test(normalized)) {
+      return { type: 'home' };
+    }
+
+    return { type: 'unknown', hash, params };
+  }
+
+  async handleNavigation() {
+    const route = this.parseURL();
+
+    if (!this.app) {
+      return route;
+    }
+
+    switch (route.type) {
+      case 'invite':
+        await this.app.handleInviteRoute(route.roomId, route.inviteToken);
+        break;
+      case 'encodedInvite':
+        await this.app.handleEncodedInvite(route.token);
+        break;
+      case 'legacyInvite':
+        await this.app.handleLegacyInvite(route);
+        break;
+      case 'room':
+        await this.app.onRoomRoute(route.roomId, route.params);
+        break;
+      case 'home':
+        this.app.showWelcome();
+        break;
+      default:
+        break;
+    }
+
+    return route;
+  }
+
+  updateRoomRoute(roomId, options = {}) {
+    if (typeof window === 'undefined' || !roomId) {
+      return;
+    }
+
+    const url = this.generateRoomURL(roomId, options);
+    const hashIndex = url.indexOf('#');
+    const hash = hashIndex >= 0 ? url.slice(hashIndex) : '';
+    if (!hash) {
+      return;
+    }
+
+    const current = window.location.hash || '';
+    if (current === hash) {
+      return;
+    }
+
+    window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.search}${hash}`);
+  }
+
+  clearRoute() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.search}#/`);
+  }
+}
+
+class RoomHistory {
+  constructor(options = {}) {
+    this.storageKey = options.storageKey || 'secure-chat:room-history';
+    this.maxHistory = options.maxHistory || 10;
+    this.available = this.checkAvailability();
+  }
+
+  checkAvailability() {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return false;
+    }
+
+    try {
+      const testKey = `${this.storageKey}:test`;
+      localStorage.setItem(testKey, '1');
+      localStorage.removeItem(testKey);
+      return true;
+    } catch (error) {
+      console.warn('Local storage unavailable for room history.', error);
+      return false;
+    }
+  }
+
+  async getHistory() {
+    if (!this.available) {
+      return [];
+    }
+
+    try {
+      const raw = localStorage.getItem(this.storageKey);
+      if (!raw) {
+        return [];
+      }
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+      return parsed.map((entry) => this.normalizeEntry(entry)).filter(Boolean);
+    } catch (error) {
+      console.warn('Unable to read room history.', error);
+      return [];
+    }
+  }
+
+  async saveRoomAccess(room) {
+    if (!room || !room.roomId) {
+      return null;
+    }
+
+    const history = await this.getHistory();
+
+    const entry = {
+      roomId: room.roomId,
+      roomName: room.roomName || room.roomId,
+      hostName: room.hostName || '',
+      url: room.url || '',
+      lastAccessed: room.lastAccessed || Date.now(),
+      role: room.role || 'guest',
+      myIdentity: room.myIdentity || null,
+      members: Array.isArray(room.members) ? room.members.slice(0, 8) : [],
+      encryptedKey: room.encryptionKey || '',
+      identityHint: room.identityHint || null
+    };
+
+    const filtered = history.filter((h) => h.roomId !== entry.roomId);
+    filtered.unshift(entry);
+    const trimmed = filtered.slice(0, this.maxHistory);
+    await this.persist(trimmed);
+    return entry;
+  }
+
+  async touch(roomId) {
+    const history = await this.getHistory();
+    const updated = history.map((entry) => (entry.roomId === roomId
+      ? { ...entry, lastAccessed: Date.now() }
+      : entry));
+    await this.persist(updated);
+  }
+
+  async remove(roomId) {
+    const history = await this.getHistory();
+    const filtered = history.filter((entry) => entry.roomId !== roomId);
+    await this.persist(filtered);
+    return filtered;
+  }
+
+  async clear() {
+    if (!this.available) {
+      return [];
+    }
+    try {
+      localStorage.removeItem(this.storageKey);
+    } catch (error) {
+      console.warn('Unable to clear room history.', error);
+    }
+    return [];
+  }
+
+  async persist(entries) {
+    if (!this.available) {
+      return;
+    }
+    try {
+      localStorage.setItem(this.storageKey, JSON.stringify(entries));
+    } catch (error) {
+      console.warn('Unable to persist room history.', error);
+    }
+  }
+
+  formatRelativeTime(timestamp) {
+    if (!Number.isFinite(timestamp)) {
+      return 'moments ago';
+    }
+
+    const now = Date.now();
+    const delta = Math.max(0, now - timestamp);
+
+    const minute = 60000;
+    const hour = 60 * minute;
+    const day = 24 * hour;
+
+    if (delta < minute) {
+      return 'moments ago';
+    }
+    if (delta < hour) {
+      const minutes = Math.round(delta / minute);
+      return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+    }
+    if (delta < day) {
+      const hours = Math.round(delta / hour);
+      return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+    }
+    const days = Math.round(delta / day);
+    return `${days} day${days === 1 ? '' : 's'} ago`;
+  }
+
+  normalizeEntry(entry) {
+    if (!entry || typeof entry !== 'object') {
+      return null;
+    }
+    return {
+      roomId: entry.roomId,
+      roomName: entry.roomName || entry.roomId,
+      hostName: entry.hostName || '',
+      url: entry.url || '',
+      lastAccessed: Number(entry.lastAccessed) || Date.now(),
+      role: entry.role === 'host' ? 'host' : 'guest',
+      myIdentity: entry.myIdentity || null,
+      members: Array.isArray(entry.members) ? entry.members : [],
+      encryptedKey: entry.encryptedKey || '',
+      identityHint: entry.identityHint || null
+    };
+  }
+
+  async find(roomId) {
+    const history = await this.getHistory();
+    return history.find((entry) => entry?.roomId === roomId) || null;
+  }
+}
+
+class RoomReentry {
+  constructor(history, app) {
+    this.history = history;
+    this.app = app;
+    this.container = DOM.reentryContainer;
+    this.currentEntry = null;
+    this.onSubmit = this.handleSubmit.bind(this);
+  }
+
+  show(entry, params = new URLSearchParams()) {
+    if (!this.container || !entry) {
+      return;
+    }
+
+    this.currentEntry = entry;
+    const hint = entry.identityHint || entry.myIdentity?.hint || null;
+    const lastAccessed = this.history.formatRelativeTime(entry.lastAccessed);
+    const identityAvatar = typeof entry.myIdentity?.avatar === 'string'
+      ? entry.myIdentity.avatar
+      : entry.myIdentity?.avatar?.emoji || '🙂';
+
+    this.container.innerHTML = `
+      <div class="reentry-screen">
+        <div class="reentry-card">
+          <h2>Welcome Back!</h2>
+          <div class="room-preview">
+            <div class="room-title">
+              <span class="room-icon">🏠</span>
+              <span>${escapeHTML(entry.roomName || entry.roomId)}</span>
+            </div>
+            <div class="your-identity">
+              <span class="identity-avatar">${escapeHTML(identityAvatar)}</span>
+              <div class="identity-info">
+                <span class="identity-name">${escapeHTML(entry.myIdentity?.displayName || 'You')}</span>
+                <span class="identity-label">Your identity in this room${hint ? ` (${escapeHTML(hint)})` : ''}</span>
+              </div>
+            </div>
+            <div class="last-visit">Last visited: ${escapeHTML(lastAccessed)}</div>
+          </div>
+          <div class="unlock-section">
+            <label for="reentryPassword">Enter your identity password to rejoin</label>
+            <input type="password" id="reentryPassword" data-role="password" placeholder="Your identity password">
+            <div class="reentry-options">
+              <label class="remember-device">
+                <input type="checkbox" data-role="remember">
+                <span>Remember on this device for 30 days</span>
+              </label>
+            </div>
+            <button class="btn-primary" data-role="submit"><span>🔓</span> Rejoin Room</button>
+            <div class="reentry-error" data-role="error" aria-live="polite"></div>
+          </div>
+          <div class="alternative-options">
+            <button class="btn-text" data-role="new-identity">Join as different identity</button>
+            <button class="btn-text" data-role="back-home">Back to home</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    this.container.hidden = false;
+
+    const passwordInput = this.container.querySelector('[data-role="password"]');
+    const submitBtn = this.container.querySelector('[data-role="submit"]');
+    const remember = this.container.querySelector('[data-role="remember"]');
+
+    if (submitBtn) {
+      submitBtn.addEventListener('click', this.onSubmit);
+    }
+
+    if (passwordInput) {
+      passwordInput.addEventListener('keypress', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          this.handleSubmit();
+        }
+      });
+      const hintedPassword = params.get('pwd');
+      if (hintedPassword) {
+        try {
+          passwordInput.value = decodeURIComponent(hintedPassword);
+        } catch (error) {
+          passwordInput.value = hintedPassword;
+        }
+      }
+      setTimeout(() => passwordInput.focus(), 50);
+    }
+
+    const backBtn = this.container.querySelector('[data-role="back-home"]');
+    if (backBtn) {
+      backBtn.addEventListener('click', () => {
+        this.hide();
+        this.app?.showWelcome();
+        this.app?.roomURLManager?.clearRoute();
+      });
+    }
+
+    const newIdentityBtn = this.container.querySelector('[data-role="new-identity"]');
+    if (newIdentityBtn) {
+      newIdentityBtn.addEventListener('click', () => {
+        this.hide();
+        this.app?.clearStoredIdentity(entry.roomId);
+        this.app?.showJoin();
+      });
+    }
+
+    this.tryAutoUnlock(entry, passwordInput, remember);
+  }
+
+  hide() {
+    if (!this.container) {
+      return;
+    }
+    this.container.hidden = true;
+    this.container.innerHTML = '';
+    this.currentEntry = null;
+  }
+
+  showError(message) {
+    if (!this.container) {
+      return;
+    }
+    const errorEl = this.container.querySelector('[data-role="error"]');
+    if (errorEl) {
+      errorEl.textContent = message || '';
+    }
+  }
+
+  handleSubmit() {
+    if (!this.currentEntry || !this.container) {
+      return;
+    }
+
+    const password = this.container.querySelector('[data-role="password"]')?.value || '';
+    const remember = this.container.querySelector('[data-role="remember"]')?.checked || false;
+
+    this.app?.handleReentryAttempt(this.currentEntry, password, remember)
+      .then((success) => {
+        if (success) {
+          if (remember) {
+            this.storeCredential(this.currentEntry.roomId, password);
+          } else {
+            this.clearCredential(this.currentEntry.roomId);
+          }
+          this.hide();
+        } else {
+          this.showError('Invalid password. Please try again.');
+        }
+      })
+      .catch((error) => {
+        console.warn('Failed to process reentry attempt.', error);
+        this.showError('Unable to unlock this identity.');
+      });
+  }
+
+  tryAutoUnlock(entry, passwordInput, rememberCheckbox) {
+    const stored = this.loadCredential(entry.roomId);
+    if (!stored) {
+      return;
+    }
+
+    if (passwordInput) {
+      passwordInput.value = stored.password;
+    }
+    if (rememberCheckbox) {
+      rememberCheckbox.checked = true;
+    }
+
+    this.app?.handleReentryAttempt(entry, stored.password, true)
+      .then((success) => {
+        if (!success) {
+          this.clearCredential(entry.roomId);
+          this.showError('Stored password is no longer valid.');
+        } else {
+          this.hide();
+        }
+      })
+      .catch(() => {
+        this.clearCredential(entry.roomId);
+      });
+  }
+
+  storeCredential(roomId, password) {
+    if (typeof window === 'undefined' || !roomId) {
+      return;
+    }
+    try {
+      let value = password;
+      let encoded = false;
+      if (typeof btoa === 'function') {
+        try {
+          value = btoa(encodeURIComponent(password));
+          encoded = true;
+        } catch (error) {
+          value = password;
+          encoded = false;
+        }
+      }
+      const payload = {
+        password: value,
+        encoded,
+        expires: Date.now() + 30 * 24 * 60 * 60 * 1000
+      };
+      localStorage.setItem(`secure-chat:remember:${roomId}`, JSON.stringify(payload));
+    } catch (error) {
+      console.warn('Unable to persist remembered credential.', error);
+    }
+  }
+
+  loadCredential(roomId) {
+    if (typeof window === 'undefined' || !roomId) {
+      return null;
+    }
+    try {
+      const raw = localStorage.getItem(`secure-chat:remember:${roomId}`);
+      if (!raw) {
+        return null;
+      }
+      const payload = JSON.parse(raw);
+      if (!payload || payload.expires < Date.now()) {
+        this.clearCredential(roomId);
+        return null;
+      }
+      if (payload.encoded && typeof atob === 'function') {
+        try {
+          const decoded = decodeURIComponent(atob(payload.password));
+          return { password: decoded, expires: payload.expires, encoded: true };
+        } catch (error) {
+          console.warn('Unable to decode stored credential.', error);
+          return { password: payload.password, expires: payload.expires, encoded: false };
+        }
+      }
+      return payload;
+    } catch (error) {
+      console.warn('Unable to load remembered credential.', error);
+      return null;
+    }
+  }
+
+  clearCredential(roomId) {
+    if (typeof window === 'undefined' || !roomId) {
+      return;
+    }
+    try {
+      localStorage.removeItem(`secure-chat:remember:${roomId}`);
+    } catch (error) {
+      console.warn('Unable to clear remembered credential.', error);
+    }
+  }
+}
+
+class BookmarkableRooms {
+  constructor(app) {
+    this.app = app;
+  }
+
+  setupRouting() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    window.addEventListener('popstate', () => {
+      this.app?.roomURLManager?.handleNavigation();
+    });
+  }
+
+  updatePageTitle(roomName = null) {
+    if (typeof document === 'undefined') {
+      return;
+    }
+    document.title = roomName ? `${roomName} - Secure Chat` : 'Secure Chat';
+  }
+
+  generateManifest() {
+    return {
+      name: 'Secure Chat',
+      short_name: 'SecureChat',
+      start_url: '/#/',
+      display: 'standalone',
+      background_color: '#1e3c72',
+      theme_color: '#2a5298',
+      icons: [
+        {
+          src: '/icon-192.png',
+          sizes: '192x192',
+          type: 'image/png'
+        }
+      ],
+      share_target: {
+        action: '/#/join',
+        method: 'GET',
+        params: {
+          title: 'room',
+          text: 'invite',
+          url: 'url'
+        }
+      }
+    };
+  }
+}
+
+class DeepLinking {
+  constructor(app) {
+    this.app = app;
+  }
+
+  setupDeepLinks() {
+    if (typeof navigator === 'undefined') {
+      return;
+    }
+
+    try {
+      if (typeof navigator.registerProtocolHandler === 'function') {
+        navigator.registerProtocolHandler('web+securechat', '/#/room/%s', 'Secure Chat');
+      }
+    } catch (error) {
+      console.warn('Unable to register protocol handler.', error);
+    }
+
+    if (typeof navigator.share === 'function') {
+      this.setupShareButton();
+    }
+  }
+
+  setupShareButton() {
+    this.shareRoom = async (roomId) => {
+      if (!roomId) {
+        return;
+      }
+      const roomUrl = this.app?.roomURLManager?.generateRoomURL(roomId);
+      if (!roomUrl) {
+        return;
+      }
+      try {
+        await navigator.share({
+          title: 'Join my secure room',
+          text: 'Click to join my encrypted chat room',
+          url: roomUrl
+        });
+      } catch (error) {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(roomUrl);
+        }
+        this.app?.showToast?.('Room link copied!', 'info');
+      }
+    };
+  }
+
+  generateRoomQR(roomId) {
+    if (typeof window === 'undefined') {
+      return null;
+    }
+    if (typeof QRCode !== 'function') {
+      return null;
+    }
+    const roomUrl = this.app?.roomURLManager?.generateRoomURL(roomId);
+    if (!roomUrl) {
+      return null;
+    }
+    return new QRCode({
+      content: roomUrl,
+      width: 256,
+      height: 256,
+      color: {
+        dark: '#1e293b',
+        light: '#ffffff'
+      }
+    });
+  }
 }
 
 class MessageDetailsModal {
@@ -555,6 +1242,11 @@ class SecureChat {
         this.identityModalMode = 'create';
         this.identityRetryTimer = null;
         this.pendingStoredIdentity = null;
+        this.roomHistory = new RoomHistory();
+        this.roomReentry = new RoomReentry(this.roomHistory, this);
+        this.roomURLManager = new RoomURLManager(this);
+        this.bookmarkableRooms = new BookmarkableRooms(this);
+        this.deepLinking = new DeepLinking(this);
         this.cryptoUpdates = CryptoManager.onUpdated((update) => {
           const fingerprint = update?.fingerprint || '';
           this.latestFingerprint = fingerprint;
@@ -597,10 +1289,7 @@ class SecureChat {
         this.updatePendingMessages(0);
         this.updateAverageHops(0);
         this.initStorage();
-        this.renderRoomHistory([]);
-        this.checkForSharedLink().catch((error) => {
-          console.error('Failed to process invite link.', error);
-        });
+        this.renderRoomHistory();
         this.initEventListeners();
         this.initSimpleSetup();
         this.updateStatus('Disconnected', '');
@@ -609,6 +1298,9 @@ class SecureChat {
         this.initDevRoutes();
         this.applyFeatureFlags();
         this.initIdentityFlow();
+        this.bookmarkableRooms.setupRouting();
+        this.deepLinking.setupDeepLinks();
+        this.roomURLManager.start();
       }
 
       initEventListeners() {
@@ -1428,27 +2120,27 @@ This invite can be used only once. Share the link privately.`;
       }
 
       async checkForSharedLink() {
-        if (typeof window === 'undefined') {
+        const route = this.roomURLManager?.parseURL?.();
+        if (!route) {
           return;
         }
 
-        const hash = window.location.hash || '';
-        let invitePayload = null;
-
-        if (hash.startsWith('#/j/')) {
-          const encoded = decodeURIComponent(hash.slice(4));
-          invitePayload = SecureInvite.decodePayload(encoded);
-        } else if (hash.startsWith('#/join/')) {
-          const parts = hash.replace(/^#\/+/, '').split('/');
-          if (parts.length >= 4) {
-            invitePayload = {
-              r: parts[1],
-              s: parts[2],
-              k: parts[3]
-            };
-          }
+        switch (route.type) {
+          case 'invite':
+            await this.handleInviteRoute(route.roomId, route.inviteToken);
+            break;
+          case 'encodedInvite':
+            await this.handleEncodedInvite(route.token);
+            break;
+          case 'legacyInvite':
+            await this.handleLegacyInvite(route);
+            break;
+          default:
+            break;
         }
+      }
 
+      async processInvitePayload(invitePayload) {
         if (!invitePayload) {
           return;
         }
@@ -1462,7 +2154,7 @@ This invite can be used only once. Share the link privately.`;
         };
 
         if (!invite.roomId || !invite.seatId || !invite.secretKey) {
-          console.warn('Invite link missing required parameters.');
+          this.showJoin('Invite unavailable', 'Invite link missing required parameters.');
           return;
         }
 
@@ -1486,9 +2178,7 @@ This invite can be used only once. Share the link privately.`;
 
         try {
           await this.startJoinFromInvite(invite);
-          if (window.history && window.location.hash) {
-            window.history.replaceState({}, document.title, window.location.pathname);
-          }
+          this.roomURLManager.updateRoomRoute(invite.roomId);
         } catch (error) {
           console.error('Failed to join using invite.', error);
           const message = error?.message || 'Unable to use this invite link.';
@@ -1744,16 +2434,94 @@ This invite can be used only once. Share the link privately.`;
         }
       }
 
-      showWelcome() {
-        this.showScreen('welcomeScreen');
-        this.renderRoomHistory(projection.roomList());
+      async onRoomRoute(roomId, params = new URLSearchParams()) {
+        if (!roomId) {
+          this.showWelcome();
+          return;
+        }
+
+        this.roomId = roomId;
+        const entry = await this.roomHistory.find(roomId);
+
+        if (entry?.myIdentity) {
+          const searchParams = params instanceof URLSearchParams ? params : new URLSearchParams(params);
+          this.roomReentry.show(entry, searchParams);
+        } else {
+          this.showJoin('Secure invite required', 'Use a new invite link from the host to enter this room.');
+        }
       }
 
-      showHost() {
+      async handleInviteRoute(roomId, inviteToken) {
+        if (!inviteToken) {
+          this.showJoin('Invite unavailable', 'Missing invite token in the URL.');
+          return;
+        }
+
+        let payload = null;
+        try {
+          payload = SecureInvite.decodePayload(inviteToken);
+        } catch (error) {
+          console.warn('Unable to decode invite token.', error);
+        }
+
+        if (payload && roomId && !payload.roomId && !payload.r) {
+          payload.r = roomId;
+        }
+
+        if (!payload) {
+          this.showJoin('Invite unavailable', 'This invite link could not be decoded.');
+          return;
+        }
+
+        await this.processInvitePayload(payload);
+      }
+
+      async handleEncodedInvite(token) {
+        if (!token) {
+          return;
+        }
+
+        let payload = null;
+        try {
+          payload = SecureInvite.decodePayload(token);
+        } catch (error) {
+          console.warn('Unable to decode encoded invite payload.', error);
+        }
+
+        if (!payload) {
+          this.showJoin('Invite unavailable', 'This invite link is no longer valid.');
+          return;
+        }
+
+        await this.processInvitePayload(payload);
+      }
+
+      async handleLegacyInvite(route) {
+        if (!route) {
+          return;
+        }
+
+        const payload = {
+          r: route.roomId,
+          s: route.seatId,
+          k: route.secretKey
+        };
+
+        await this.processInvitePayload(payload);
+      }
+
+      showWelcome() {
+        this.showScreen('welcomeScreen');
+        this.roomReentry.hide();
+        this.bookmarkableRooms.updatePageTitle();
+        this.renderRoomHistory();
+      }
+
+      showHost(existingRoomId = null) {
         CryptoManager.reset();
         this.latestFingerprint = '';
         this.lastAnnouncedEpoch = -1;
-        this.roomId = this.generateRoomId();
+        this.roomId = existingRoomId || this.generateRoomId();
         this.roomSalt = null;
         this.roomSaltBase64 = '';
         this.resetMessageCounters();
@@ -1773,6 +2541,9 @@ This invite can be used only once. Share the link privately.`;
         this.updateInviteLink('');
         this.currentShareLink = '';
         this.setWaitingBanner(false, '');
+        this.bookmarkableRooms.updatePageTitle(this.getRoomDisplayName());
+        this.roomURLManager.updateRoomRoute(this.roomId);
+        this.roomReentry.hide();
         this.showScreen('hostScreen');
       }
 
@@ -1789,6 +2560,8 @@ This invite can be used only once. Share the link privately.`;
         if (DOM.joinStatusDetail) {
           DOM.joinStatusDetail.textContent = detailMessage;
         }
+        this.bookmarkableRooms.updatePageTitle();
+        this.roomReentry.hide();
         this.showScreen('joinScreen');
       }
 
@@ -1804,6 +2577,9 @@ This invite can be used only once. Share the link privately.`;
         hostScreen?.classList.remove('active');
         joinScreen?.classList.remove('active');
         chatScreen?.classList.add('active');
+
+        this.roomReentry.hide();
+        this.bookmarkableRooms.updatePageTitle(this.getRoomDisplayName());
 
         const currentRoom = DOM.currentRoom;
         if (currentRoom) {
@@ -1841,58 +2617,197 @@ This invite can be used only once. Share the link privately.`;
           this.roomListUnsub();
         }
 
-        this.roomListUnsub = subscribe('projection:roomList', (rooms) => this.renderRoomHistory(rooms));
-        this.renderRoomHistory(projection.roomList());
+        this.roomListUnsub = subscribe('projection:roomList', () => this.renderRoomHistory());
+        this.renderRoomHistory();
 
         if (this.roomId) {
           this.renderChatMessages(projection.messagesByRoom(this.roomId));
         }
       }
 
-      renderRoomHistory(rooms = []) {
+      async renderRoomHistory() {
         const container = DOM.roomHistory;
-        const items = DOM.historyItems;
+        const content = DOM.roomHistoryContent;
 
-        if (!container || !items) {
+        if (!container || !content) {
           return;
         }
 
-        const list = Array.isArray(rooms) ? rooms : [];
+        const history = (await this.roomHistory.getHistory()).filter(Boolean);
 
-        if (list.length > 0) {
-          container.style.display = 'block';
-          items.innerHTML = '';
+        container.style.display = 'block';
+        content.innerHTML = '';
 
-          list.forEach((room) => {
-            const item = document.createElement('div');
-            item.className = 'history-item';
-            item.addEventListener('click', () => this.quickJoin(room.id));
-            item.setAttribute('role', 'button');
-            item.tabIndex = 0;
-            item.addEventListener('keydown', (event) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                this.quickJoin(room.id);
-              }
-            });
+        const section = document.createElement('div');
+        section.className = 'room-history-section';
 
-            const roomSpan = document.createElement('span');
-            roomSpan.className = 'history-room';
-            roomSpan.textContent = room.id;
+        const heading = document.createElement('h3');
+        heading.textContent = 'Your Recent Rooms';
+        section.appendChild(heading);
 
-            const timeSpan = document.createElement('span');
-            timeSpan.className = 'history-time';
-            const timestamp = room.lastActive || room.time || Date.now();
-            timeSpan.textContent = new Date(timestamp).toLocaleDateString();
-
-            item.appendChild(roomSpan);
-            item.appendChild(timeSpan);
-            items.appendChild(item);
-          });
-        } else {
-          container.style.display = 'none';
-          items.innerHTML = '';
+        if (history.length === 0) {
+          const empty = document.createElement('div');
+          empty.className = 'empty-history';
+          empty.innerHTML = `
+            <span class="empty-icon">🏠</span>
+            <p>No recent rooms</p>
+            <span class="hint">Rooms you create or join will appear here</span>
+          `;
+          section.appendChild(empty);
+          content.appendChild(section);
+          return;
         }
+
+        const cards = document.createElement('div');
+        cards.className = 'room-cards';
+
+        history.forEach((room) => {
+          const card = document.createElement('div');
+          card.className = 'room-card';
+          card.dataset.roomId = room.roomId;
+
+          card.addEventListener('click', (event) => {
+            if (event.target.closest('.room-card-actions')) {
+              return;
+            }
+            this.handleHistoryRejoin(room);
+          });
+
+          const header = document.createElement('div');
+          header.className = 'room-card-header';
+
+          const roomName = document.createElement('span');
+          roomName.className = 'room-name';
+          roomName.textContent = room.roomName || room.roomId;
+
+          const role = document.createElement('span');
+          role.className = 'room-role';
+          role.textContent = room.role === 'host' ? '👑' : '👤';
+
+          header.appendChild(roomName);
+          header.appendChild(role);
+
+          const body = document.createElement('div');
+          body.className = 'room-card-body';
+
+          const membersRow = document.createElement('div');
+          membersRow.className = 'room-members';
+
+          const visibleMembers = Array.isArray(room.members) ? room.members.slice(0, 4) : [];
+          visibleMembers.forEach((member) => {
+            const avatar = document.createElement('span');
+            avatar.className = 'member-avatar';
+            avatar.title = member.displayName || 'Member';
+            avatar.textContent = this.getMemberAvatar(member);
+            membersRow.appendChild(avatar);
+          });
+
+          if ((room.members?.length || 0) > 4) {
+            const count = document.createElement('span');
+            count.className = 'member-count';
+            count.textContent = `+${room.members.length - 4}`;
+            membersRow.appendChild(count);
+          }
+
+          const meta = document.createElement('div');
+          meta.className = 'room-meta';
+          meta.innerHTML = `
+            <span class="last-accessed">${this.roomHistory.formatRelativeTime(room.lastAccessed)}</span>
+          `;
+
+          body.appendChild(membersRow);
+          body.appendChild(meta);
+
+          const actions = document.createElement('div');
+          actions.className = 'room-card-actions';
+
+          const rejoinBtn = document.createElement('button');
+          rejoinBtn.className = 'btn-rejoin';
+          rejoinBtn.textContent = 'Rejoin';
+          rejoinBtn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            this.handleHistoryRejoin(room);
+          });
+
+          const copyBtn = document.createElement('button');
+          copyBtn.className = 'btn-copy-link';
+          copyBtn.title = 'Copy room link';
+          copyBtn.textContent = '🔗';
+          copyBtn.addEventListener('click', async (event) => {
+            event.stopPropagation();
+            await this.copyRoomLink(room.url || this.roomURLManager.generateRoomURL(room.roomId));
+          });
+
+          const removeBtn = document.createElement('button');
+          removeBtn.className = 'btn-remove';
+          removeBtn.title = 'Remove';
+          removeBtn.textContent = '×';
+          removeBtn.addEventListener('click', async (event) => {
+            event.stopPropagation();
+            await this.removeFromHistory(room.roomId);
+          });
+
+          actions.appendChild(rejoinBtn);
+          actions.appendChild(copyBtn);
+          actions.appendChild(removeBtn);
+
+          card.appendChild(header);
+          card.appendChild(body);
+          card.appendChild(actions);
+
+          cards.appendChild(card);
+        });
+
+        section.appendChild(cards);
+
+        const clearBtn = document.createElement('button');
+        clearBtn.className = 'btn-clear-history';
+        clearBtn.textContent = 'Clear History';
+        clearBtn.addEventListener('click', async () => {
+          await this.clearRoomHistory();
+        });
+
+        section.appendChild(clearBtn);
+        content.appendChild(section);
+      }
+
+      buildRoomHistoryPayload() {
+        if (!this.roomId) {
+          return null;
+        }
+
+        const members = this.roomMembers?.members instanceof Map
+          ? Array.from(this.roomMembers.members.values())
+          : [];
+
+        const entryMembers = members.map((member) => ({
+          displayName: member.displayName || 'Member',
+          avatar: member.avatar?.emoji || member.avatar || '🙂'
+        }));
+
+        const hostMember = members.find((member) => member.isHost) || null;
+        const roomName = this.getRoomDisplayName();
+        const identityHint = this.pendingStoredIdentity?.hint || null;
+
+        return {
+          roomId: this.roomId,
+          roomName,
+          hostName: hostMember?.displayName || roomName,
+          url: this.roomURLManager.generateRoomURL(this.roomId, identityHint ? { passwordHint: identityHint } : {}),
+          lastAccessed: Date.now(),
+          role: this.isHost ? 'host' : 'guest',
+          myIdentity: this.localIdentity
+            ? {
+                id: this.localIdentity.id,
+                displayName: this.localIdentity.displayName || 'You',
+                avatar: this.localIdentity.avatar || { emoji: '🙂' },
+                hint: identityHint
+              }
+            : null,
+          members: entryMembers,
+          encryptionKey: this.roomSaltBase64 || '',
+          identityHint
+        };
       }
 
       subscribeToMessages(roomId) {
@@ -1953,11 +2868,177 @@ This invite can be used only once. Share the link privately.`;
         }
       }
 
+      getMemberAvatar(member) {
+        if (!member) {
+          return '🙂';
+        }
+        if (typeof member.avatar === 'string') {
+          return member.avatar;
+        }
+        if (member.avatar && typeof member.avatar.emoji === 'string') {
+          return member.avatar.emoji;
+        }
+        return '🙂';
+      }
+
+      getRoomDisplayName() {
+        if (this.remoteIdentity?.displayName) {
+          return `${this.remoteIdentity.displayName}'s room`;
+        }
+        if (this.isHost && this.localIdentity?.displayName) {
+          return `${this.localIdentity.displayName}'s room`;
+        }
+        return this.roomId || 'Secure Chat';
+      }
+
       quickJoin(roomId) {
         const detail = roomId
           ? `Ask the host for a fresh one-time invite to rejoin room ${roomId}.`
           : 'Ask the host for a fresh one-time invite to join again.';
         this.showJoin('Secure invite required', detail);
+      }
+
+      async handleHistoryRejoin(room) {
+        if (!room || !room.roomId) {
+          return;
+        }
+
+        const entry = await this.roomHistory.find(room.roomId);
+        const passwordHint = entry?.identityHint && typeof entry.identityHint === 'string'
+          ? entry.identityHint
+          : null;
+
+        this.roomURLManager.updateRoomRoute(room.roomId, passwordHint ? { passwordHint } : {});
+        await this.roomHistory.touch(room.roomId);
+
+        if (entry?.myIdentity) {
+          const params = new URLSearchParams();
+          if (passwordHint) {
+            params.set('pwd', passwordHint);
+          }
+          this.roomReentry.show(entry, params);
+        } else {
+          await this.roomURLManager.handleNavigation();
+        }
+      }
+
+      async copyRoomLink(url) {
+        let link = url;
+        if (!link && this.roomId) {
+          link = this.roomURLManager.generateRoomURL(this.roomId);
+        }
+        if (!link) {
+          return;
+        }
+
+        const canUseClipboard = typeof navigator !== 'undefined' && navigator.clipboard?.writeText;
+
+        if (canUseClipboard) {
+          try {
+            await navigator.clipboard.writeText(link);
+            this.showToast('Room link copied!', 'info');
+            return;
+          } catch (error) {
+            console.warn('Clipboard API unavailable, falling back to legacy copy.', error);
+          }
+        }
+
+        if (typeof document === 'undefined') {
+          return;
+        }
+
+        const fallback = document.createElement('textarea');
+        fallback.value = link;
+        fallback.style.position = 'fixed';
+        fallback.style.opacity = '0';
+        document.body.appendChild(fallback);
+        fallback.select();
+        try {
+          document.execCommand('copy');
+          this.showToast('Room link copied!', 'info');
+        } catch (copyError) {
+          console.warn('Unable to copy link to clipboard.', copyError);
+        } finally {
+          fallback.remove();
+        }
+      }
+
+      async removeFromHistory(roomId) {
+        await this.roomHistory.remove(roomId);
+        await this.renderRoomHistory();
+      }
+
+      async clearRoomHistory() {
+        await this.roomHistory.clear();
+        await this.renderRoomHistory();
+      }
+
+      async handleReentryAttempt(entry, password) {
+        if (!entry || !entry.roomId || !password) {
+          return false;
+        }
+
+        let manager;
+        try {
+          manager = new RoomIdentity(entry.roomId);
+        } catch (error) {
+          console.warn('Unable to initialise identity manager for reentry.', error);
+          return false;
+        }
+
+        try {
+          const identity = await manager.verifyReturningMember(password);
+          if (!identity) {
+            return false;
+          }
+
+          this.identityManager = manager;
+          this.localIdentity = identity;
+          this.roomId = entry.roomId;
+          this.isHost = entry.role === 'host';
+          this.roomMembers?.upsertMember(identity, { isHost: this.isHost, online: true });
+          await this.roomHistory.touch(entry.roomId);
+          this.bookmarkableRooms.updatePageTitle(entry.roomName || this.getRoomDisplayName());
+
+          if (this.isHost) {
+            this.showToast('Identity unlocked. Generate a new invite to reopen the room.', 'info');
+            this.showHost(entry.roomId);
+          } else {
+            this.showJoin('Secure invite required', 'Ask the host for a fresh secure invite to rejoin this room.');
+          }
+
+          return true;
+        } catch (error) {
+          console.warn('Failed to unlock stored identity for reentry.', error);
+          return false;
+        }
+      }
+
+      async clearStoredIdentity(roomId) {
+        if (!roomId) {
+          return;
+        }
+
+        try {
+          const manager = new RoomIdentity(roomId);
+          await manager.storage.clearRoomIdentity(roomId);
+        } catch (error) {
+          console.warn('Unable to clear stored identity for room.', error);
+        }
+
+        this.roomReentry.clearCredential(roomId);
+        await this.roomHistory.remove(roomId);
+        await this.renderRoomHistory();
+      }
+
+      async handleRoomConnected() {
+        const payload = this.buildRoomHistoryPayload();
+        if (payload) {
+          await this.roomHistory.saveRoomAccess(payload);
+        }
+        this.bookmarkableRooms.updatePageTitle(payload?.roomName || this.getRoomDisplayName());
+        this.roomURLManager.updateRoomRoute(this.roomId, payload?.identityHint ? { passwordHint: payload.identityHint } : {});
+        await this.renderRoomHistory();
       }
 
       // Utilities
@@ -3402,6 +4483,9 @@ Current Key: ${CryptoManager.getCurrentKey() ? 'Loaded ✓' : 'Not set ✗'}</pr
         }
 
         this.updateStatus('Disconnected', '');
+        this.roomURLManager.clearRoute();
+        this.bookmarkableRooms.updatePageTitle();
+        this.roomReentry.hide();
         this.showWelcome();
       }
     }
