@@ -727,6 +727,8 @@ class SecureChat {
       initIdentityFlow() {
         this.identityModal = DOM.identityModal;
         this.identitySelectedName = '';
+        this.identityCurrentSuggestion = '';
+        this.identityRejectedNames = [];
 
         if (!this.identityModal) {
           return;
@@ -749,15 +751,21 @@ class SecureChat {
         }
 
         if (DOM.identityRefreshBtn) {
-          DOM.identityRefreshBtn.addEventListener('click', () => this.refreshIdentitySuggestions(true));
+          DOM.identityRefreshBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            this.tryAnotherIdentitySuggestion({ resetHistory: true });
+          });
+          DOM.identityRefreshBtn.classList.add('sr-only');
+          DOM.identityRefreshBtn.setAttribute('aria-hidden', 'true');
+          DOM.identityRefreshBtn.setAttribute('tabindex', '-1');
         }
 
         if (DOM.identityNameInput) {
           DOM.identityNameInput.addEventListener('input', () => {
             this.identitySelectedName = '';
-            this.highlightIdentitySuggestion(null);
             this.updateJoinButtonText();
             this.clearIdentityError();
+            this.renderIdentitySelector();
           });
         }
 
@@ -784,58 +792,32 @@ class SecureChat {
 
       refreshIdentitySuggestions(force = false) {
         const container = DOM.identitySuggestions;
-        if (!container || !this.nameGenerator) {
+        if (!container) {
           return;
         }
 
-        const names = this.nameGenerator.generateMultiple(5);
-        container.innerHTML = '';
-
-        names.forEach((name, index) => {
-          const button = document.createElement('button');
-          button.type = 'button';
-          button.className = 'name-option';
-          button.dataset.name = name;
-          button.innerHTML = `<span class="name-avatar">${this.getEmojiForName(name)}</span><span class="name-text">${this.escapeHtml(name)}</span>`;
-          button.addEventListener('click', () => this.selectIdentitySuggestion(name));
-          container.appendChild(button);
-          if (index === 0 && (force || !this.identitySelectedName)) {
-            this.identitySelectedName = name;
-            button.classList.add('selected');
+        if (force) {
+          this.identityRejectedNames = [];
+          if (!DOM.identityNameInput?.value?.trim()) {
+            this.identitySelectedName = '';
           }
-        });
-
-        if (this.identitySelectedName) {
-          this.highlightIdentitySuggestion(this.identitySelectedName);
+          this.identityCurrentSuggestion = '';
         }
+
+        if (!this.identityCurrentSuggestion) {
+          this.identityCurrentSuggestion = this.generateUniqueIdentitySuggestion();
+        }
+
+        this.renderIdentitySelector();
 
         if (DOM.identityNameInput && force) {
           DOM.identityNameInput.value = '';
         }
 
-        this.updateJoinButtonText();
-      }
-
-      selectIdentitySuggestion(name) {
-        this.identitySelectedName = name;
-        this.highlightIdentitySuggestion(name);
-        if (DOM.identityNameInput) {
-          DOM.identityNameInput.value = '';
+        if (force) {
+          this.updateJoinButtonText();
+          this.clearIdentityError();
         }
-        this.updateJoinButtonText();
-        this.clearIdentityError();
-      }
-
-      highlightIdentitySuggestion(name) {
-        const container = DOM.identitySuggestions;
-        if (!container) {
-          return;
-        }
-
-        container.querySelectorAll('.name-option').forEach((button) => {
-          const candidate = button?.dataset?.name || '';
-          button.classList.toggle('selected', Boolean(name) && candidate === name);
-        });
       }
 
       getEmojiForName(name) {
@@ -880,6 +862,231 @@ class SecureChat {
             ? `Secure your seat as ${name}`
             : 'Secure your seat in this room';
         }
+      }
+
+      renderIdentitySelector() {
+        const container = DOM.identitySuggestions;
+        if (!container) {
+          return;
+        }
+
+        if (!Array.isArray(this.identityRejectedNames)) {
+          this.identityRejectedNames = [];
+        }
+
+        if (!this.identityCurrentSuggestion) {
+          this.identityCurrentSuggestion = this.generateUniqueIdentitySuggestion();
+        }
+
+        const suggestion = this.identityCurrentSuggestion || this.generateFallbackName();
+        const avatar = this.computeAvatarFromName(suggestion);
+        const isAccepted = this.identitySelectedName === suggestion;
+        const rejected = Array.isArray(this.identityRejectedNames)
+          ? this.identityRejectedNames
+          : [];
+
+        container.innerHTML = '';
+
+        const card = document.createElement('div');
+        card.className = 'name-selector-card';
+        if (isAccepted) {
+          card.dataset.state = 'selected';
+        }
+
+        const currentDisplay = document.createElement('div');
+        currentDisplay.className = 'current-name-display';
+
+        const avatarPreview = document.createElement('div');
+        avatarPreview.className = 'avatar-preview';
+        if (avatar?.color) {
+          avatarPreview.style.background = avatar.color;
+        }
+        avatarPreview.textContent = avatar?.emoji || '🙂';
+
+        const namePreview = document.createElement('div');
+        namePreview.className = 'name-preview';
+
+        const nameHeading = document.createElement('h2');
+        nameHeading.textContent = suggestion;
+
+        const nameType = document.createElement('span');
+        nameType.className = 'name-type';
+        nameType.textContent = isAccepted ? 'Selected identity' : 'Suggested identity';
+
+        namePreview.appendChild(nameHeading);
+        namePreview.appendChild(nameType);
+
+        currentDisplay.appendChild(avatarPreview);
+        currentDisplay.appendChild(namePreview);
+
+        const actions = document.createElement('div');
+        actions.className = 'name-actions';
+
+        const acceptButton = document.createElement('button');
+        acceptButton.type = 'button';
+        acceptButton.className = 'btn btn-primary';
+        const acceptIcon = document.createElement('span');
+        acceptIcon.textContent = '✓';
+        const acceptText = document.createElement('span');
+        acceptText.textContent = isAccepted ? 'Selected' : 'I like this one';
+        acceptButton.appendChild(acceptIcon);
+        acceptButton.appendChild(acceptText);
+        if (isAccepted) {
+          acceptButton.disabled = true;
+          acceptButton.setAttribute('aria-disabled', 'true');
+        }
+        acceptButton.addEventListener('click', () => this.acceptCurrentIdentitySuggestion());
+
+        const regenerateButton = document.createElement('button');
+        regenerateButton.type = 'button';
+        regenerateButton.className = 'btn btn-secondary';
+        const regenerateIcon = document.createElement('span');
+        regenerateIcon.textContent = '🎲';
+        const regenerateText = document.createElement('span');
+        regenerateText.textContent = 'Try another';
+        regenerateButton.appendChild(regenerateIcon);
+        regenerateButton.appendChild(regenerateText);
+        regenerateButton.addEventListener('click', () => this.tryAnotherIdentitySuggestion());
+
+        const customButton = document.createElement('button');
+        customButton.type = 'button';
+        customButton.className = 'btn-text';
+        customButton.textContent = 'or create custom name';
+        customButton.addEventListener('click', () => this.focusCustomIdentityInput());
+
+        actions.appendChild(acceptButton);
+        actions.appendChild(regenerateButton);
+        actions.appendChild(customButton);
+
+        const history = document.createElement('div');
+        history.className = 'rejected-names';
+        if (!rejected.length) {
+          history.hidden = true;
+        } else {
+          rejected.forEach((name) => {
+            if (typeof name !== 'string' || !name) {
+              return;
+            }
+            const pill = document.createElement('button');
+            pill.type = 'button';
+            pill.className = 'rejected-pill';
+            pill.textContent = name;
+            pill.setAttribute('aria-label', `Select ${name}`);
+            pill.addEventListener('click', () => this.selectPreviousIdentitySuggestion(name));
+            history.appendChild(pill);
+          });
+        }
+
+        card.appendChild(currentDisplay);
+        card.appendChild(actions);
+        card.appendChild(history);
+
+        container.appendChild(card);
+      }
+
+      focusCustomIdentityInput() {
+        const input = DOM.identityNameInput;
+        if (input) {
+          input.focus();
+          if (typeof input.select === 'function') {
+            input.select();
+          }
+        }
+        if (this.identitySelectedName) {
+          this.identitySelectedName = '';
+          this.updateJoinButtonText();
+        }
+        this.clearIdentityError();
+        this.renderIdentitySelector();
+      }
+
+      acceptCurrentIdentitySuggestion() {
+        const suggestion = this.identityCurrentSuggestion;
+        if (!suggestion) {
+          return;
+        }
+        this.identitySelectedName = suggestion;
+        this.updateJoinButtonText();
+        this.clearIdentityError();
+        this.renderIdentitySelector();
+      }
+
+      tryAnotherIdentitySuggestion(options = {}) {
+        const { resetHistory = false } = options;
+
+        const previous = this.identityCurrentSuggestion;
+        if (resetHistory) {
+          this.identityRejectedNames = [];
+        } else if (previous) {
+          const list = this.identityRejectedNames.filter((name) => name !== previous);
+          list.unshift(previous);
+          this.identityRejectedNames = list.slice(0, 6);
+        }
+
+        let next = this.generateUniqueIdentitySuggestion();
+        if (!next) {
+          next = this.generateFallbackName();
+        }
+        this.identityCurrentSuggestion = next;
+
+        if (previous && this.identitySelectedName === previous) {
+          this.identitySelectedName = '';
+        }
+
+        this.renderIdentitySelector();
+        this.updateJoinButtonText();
+        this.clearIdentityError();
+      }
+
+      selectPreviousIdentitySuggestion(name) {
+        if (typeof name !== 'string' || !name) {
+          return;
+        }
+
+        this.identityRejectedNames = this.identityRejectedNames.filter((item) => item !== name);
+        this.identityCurrentSuggestion = name;
+
+        if (this.identitySelectedName !== name) {
+          this.identitySelectedName = '';
+          this.updateJoinButtonText();
+        }
+
+        this.clearIdentityError();
+        this.renderIdentitySelector();
+      }
+
+      generateUniqueIdentitySuggestion() {
+        const used = new Set();
+        if (this.identityCurrentSuggestion) {
+          used.add(this.identityCurrentSuggestion);
+        }
+        if (Array.isArray(this.identityRejectedNames)) {
+          this.identityRejectedNames.forEach((name) => used.add(name));
+        }
+        if (this.identitySelectedName) {
+          used.add(this.identitySelectedName);
+        }
+
+        const custom = DOM.identityNameInput?.value?.trim();
+        if (custom) {
+          used.add(custom);
+        }
+
+        let candidate = '';
+        const attempts = 12;
+        for (let index = 0; index < attempts; index += 1) {
+          candidate = this.nameGenerator?.generate();
+          if (candidate && !used.has(candidate)) {
+            return candidate;
+          }
+        }
+
+        return candidate || this.generateFallbackName();
+      }
+
+      generateFallbackName() {
+        const random = Math.floor(Math.random() * 900 + 100);
+        return `SecureGuest-${random}`;
       }
 
       updatePasswordStrength() {
