@@ -1,0 +1,5 @@
+{"id":"evt-room","op":"RoomCreated","payload":{"roomId":"room-1","title":"Replay Room"},"actor":"user-1","refs":["room:room-1"],"at":1700000000000,"semver":"1.0.0"}
+{"id":"evt-join-1","op":"UserJoinedRoom","payload":{"roomId":"room-1","userId":"user-1"},"actor":"user-1","refs":["room:room-1","user:user-1"],"at":1700000000500,"semver":"1.0.0"}
+{"id":"evt-join-2","op":"UserJoinedRoom","payload":{"roomId":"room-1","userId":"user-2"},"actor":"user-2","refs":["room:room-1","user:user-2"],"at":1700000000550,"semver":"1.0.0"}
+{"id":"evt-msg-1","op":"MessagePosted","payload":{"roomId":"room-1","messageId":"msg-1","userId":"user-1","text":"Hello from user 1","type":"me","sentAt":1700000000600,"sentAtLocal":1700000000600,"receivedAt":1700000000600},"actor":"user-1","refs":["room:room-1","msg:msg-1"],"at":1700000000600,"semver":"1.0.0"}
+{"id":"evt-msg-2","op":"MessagePosted","payload":{"roomId":"room-1","messageId":"msg-2","userId":"user-2","text":"Hello back","type":"them","sentAt":1700000001600,"sentAtLocal":1700000001600,"receivedAt":1700000001650},"actor":"user-2","refs":["room:room-1","msg:msg-2"],"at":1700000001600,"semver":"1.0.0"}

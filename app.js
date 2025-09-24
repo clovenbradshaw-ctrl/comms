@@ -28,8 +28,26 @@ const DOM = {
   statusDot: document.getElementById('statusDot'),
   chatMessages: document.getElementById('chatMessages'),
   encryptedToggle: document.getElementById('encryptedToggle'),
-  schemaToggle: document.getElementById('schemaToggle')
+  schemaToggle: document.getElementById('schemaToggle'),
+  systemAnnouncements: document.getElementById('systemAnnouncements')
 };
+
+const DEFAULT_FEATURE_FLAGS = {
+  showEncryptedView: true,
+  enableECDH: true
+};
+
+const FEATURE_FLAGS = (() => {
+  if (typeof window === 'undefined') {
+    return { ...DEFAULT_FEATURE_FLAGS };
+  }
+  const existing = window.FEATURE_FLAGS && typeof window.FEATURE_FLAGS === 'object'
+    ? window.FEATURE_FLAGS
+    : {};
+  const merged = { ...DEFAULT_FEATURE_FLAGS, ...existing };
+  window.FEATURE_FLAGS = merged;
+  return merged;
+})();
 
 const OUTGOING_BUFFER_THRESHOLD = 32;
 const BUFFER_WARNING_COOLDOWN_MS = 2000;
@@ -54,7 +72,9 @@ class SecureChat {
         this.localUserId = generateId('user-');
         this.remoteUserId = null;
         this.showEncrypted = false;
+        this.flags = FEATURE_FLAGS;
         this.systemLog = [];
+        this.systemOrderCounter = 0;
         this.currentMessages = [];
         this.messageSubscription = null;
         this.roomListUnsub = null;
@@ -82,6 +102,8 @@ class SecureChat {
         this.lastRateLimitWarningAt = 0;
         this.toastContainer = null;
         this.handleSchemaRoute = null;
+        this.lastMonotonicTime = 0;
+        this.systemAnnouncements = DOM.systemAnnouncements;
         this.cryptoUpdates = CryptoManager.onUpdated((update) => {
           const fingerprint = update?.fingerprint || '';
           this.latestFingerprint = fingerprint;
@@ -113,6 +135,7 @@ class SecureChat {
         this.setWaitingBanner(false, '');
         this.updateFingerprintDisplay(null);
         this.initDevRoutes();
+        this.applyFeatureFlags();
       }
 
       initEventListeners() {
@@ -127,6 +150,15 @@ class SecureChat {
         if (sendBtn) {
           sendBtn.addEventListener('click', () => this.sendMessage());
         }
+
+        if (this.flags.showEncryptedView && DOM.encryptedToggle) {
+          DOM.encryptedToggle.setAttribute('aria-pressed', 'false');
+        }
+
+        this.decorateInteractiveElement(DOM.roomCode, () => this.copyRoomCode());
+        this.decorateInteractiveElement(DOM.shareLink, () => this.copyShareLink());
+        this.decorateInteractiveElement(DOM.roomSaltDisplay, () => this.copyRoomSalt());
+        this.decorateInteractiveElement(DOM.chatShareLink, () => this.copyShareLink('chatShareLink'));
       }
 
       initSimpleSetup() {
@@ -156,6 +188,56 @@ class SecureChat {
 
         this.simpleEmailInput.addEventListener('change', persist);
         this.simpleEmailInput.addEventListener('blur', persist);
+      }
+
+      decorateInteractiveElement(element, handler) {
+        if (!element) {
+          return;
+        }
+
+        element.setAttribute('role', 'button');
+        element.setAttribute('tabindex', '0');
+        element.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            if (typeof handler === 'function') {
+              handler();
+            } else if (typeof element.click === 'function') {
+              element.click();
+            }
+          }
+        });
+      }
+
+      applyFeatureFlags() {
+        const encryptedToggle = DOM.encryptedToggle;
+        if (encryptedToggle) {
+          if (!this.flags.showEncryptedView) {
+            encryptedToggle.setAttribute('aria-hidden', 'true');
+            encryptedToggle.setAttribute('tabindex', '-1');
+            encryptedToggle.style.display = 'none';
+          } else {
+            encryptedToggle.setAttribute('aria-hidden', 'false');
+            encryptedToggle.style.display = '';
+          }
+        }
+      }
+
+      focusDefaultForScreen(screenId) {
+        let focusTarget = null;
+        if (screenId === 'welcomeScreen') {
+          focusTarget = DOM.welcomeScreen?.querySelector('.action-buttons button');
+        } else if (screenId === 'hostScreen') {
+          focusTarget = DOM.hostPassword;
+        } else if (screenId === 'joinScreen') {
+          focusTarget = DOM.joinCode;
+        } else if (screenId === 'chatScreen') {
+          focusTarget = DOM.messageInput;
+        }
+
+        if (focusTarget && typeof focusTarget.focus === 'function') {
+          focusTarget.focus();
+        }
       }
 
       isDevEnvironment() {
@@ -354,7 +436,7 @@ Password: [share securely via a different channel]
         return query ? `${baseUrl}?${query}` : baseUrl;
       }
 
-      copyShareLink(targetId = 'shareLink') {
+      async copyShareLink(targetId = 'shareLink') {
         const elem = DOM[targetId] || document.getElementById(targetId);
         if (!elem) {
           return;
@@ -367,13 +449,48 @@ Password: [share securely via a different channel]
           return;
         }
 
-        navigator.clipboard.writeText(link).then(() => {
-          const original = elem.textContent;
+        const success = await this.copyText(link);
+        const original = elem.textContent;
+        if (success) {
           elem.textContent = '✅ Link copied!';
-          setTimeout(() => {
-            elem.textContent = elem.dataset?.link || original;
-          }, 2000);
-        });
+        } else {
+          elem.textContent = '⚠️ Unable to copy automatically';
+          this.showToast('Copy failed. Select the text manually.', 'warning');
+        }
+        setTimeout(() => {
+          elem.textContent = elem.dataset?.link || original;
+        }, 2000);
+      }
+
+      async copyText(value) {
+        if (!value || typeof document === 'undefined') {
+          return false;
+        }
+
+        if (navigator?.clipboard?.writeText) {
+          try {
+            await navigator.clipboard.writeText(value);
+            return true;
+          } catch (error) {
+            console.warn('navigator.clipboard.writeText failed', error);
+          }
+        }
+
+        const textarea = document.createElement('textarea');
+        textarea.value = value;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'absolute';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        let success = false;
+        try {
+          success = document.execCommand('copy');
+        } catch (error) {
+          success = false;
+        }
+        textarea.remove();
+        return success;
       }
 
       setWaitingBanner(visible, link, message) {
@@ -406,11 +523,13 @@ Password: [share securely via a different channel]
           banner.classList.add('active');
           if (copyBtn) {
             copyBtn.disabled = false;
+            copyBtn.setAttribute('aria-disabled', 'false');
           }
         } else {
           banner.classList.remove('active');
           if (copyBtn) {
             copyBtn.disabled = true;
+            copyBtn.setAttribute('aria-disabled', 'true');
           }
         }
       }
@@ -421,6 +540,7 @@ Password: [share securely via a different channel]
         const target = DOM[screenId] || document.getElementById(screenId);
         if (target) {
           target.classList.add('active');
+          setTimeout(() => this.focusDefaultForScreen(screenId), 50);
         }
       }
 
@@ -498,12 +618,7 @@ Password: [share securely via a different channel]
 
         this.subscribeToMessages(this.roomId);
 
-        setTimeout(() => {
-          const input = DOM.messageInput;
-          if (input) {
-            input.focus();
-          }
-        }, 100);
+        setTimeout(() => this.focusDefaultForScreen('chatScreen'), 100);
       }
 
       // Storage
@@ -548,6 +663,14 @@ Password: [share securely via a different channel]
             const item = document.createElement('div');
             item.className = 'history-item';
             item.addEventListener('click', () => this.quickJoin(room.id));
+            item.setAttribute('role', 'button');
+            item.tabIndex = 0;
+            item.addEventListener('keydown', (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                this.quickJoin(room.id);
+              }
+            });
 
             const roomSpan = document.createElement('span');
             roomSpan.className = 'history-room';
@@ -635,6 +758,19 @@ Password: [share securely via a different channel]
       }
 
       // Utilities
+      getMonotonicTime(preferred) {
+        const candidate = Number.isFinite(preferred) ? preferred : Date.now();
+        if (!Number.isFinite(this.lastMonotonicTime)) {
+          this.lastMonotonicTime = 0;
+        }
+        if (candidate <= this.lastMonotonicTime) {
+          this.lastMonotonicTime += 1;
+        } else {
+          this.lastMonotonicTime = candidate;
+        }
+        return this.lastMonotonicTime;
+      }
+
       generateRoomSalt() {
         if (!(typeof crypto !== 'undefined' && crypto.getRandomValues)) {
           throw new Error('Secure random generator unavailable');
@@ -661,22 +797,24 @@ Password: [share securely via a different channel]
         }
       }
 
-      copyRoomSalt() {
-        if (!this.roomSaltBase64 || typeof navigator?.clipboard?.writeText !== 'function') {
+      async copyRoomSalt() {
+        if (!this.roomSaltBase64) {
           return;
         }
 
         const display = DOM.roomSaltDisplay;
-        navigator.clipboard.writeText(this.roomSaltBase64).then(() => {
-          if (!display) {
-            return;
-          }
-          const original = display.textContent;
-          display.textContent = '✅ Salt copied!';
-          setTimeout(() => {
-            display.textContent = this.roomSaltBase64 || original;
-          }, 2000);
-        });
+        const success = await this.copyText(this.roomSaltBase64);
+        if (!display) {
+          return;
+        }
+        const original = display.textContent;
+        display.textContent = success ? '✅ Salt copied!' : '⚠️ Copy failed';
+        if (!success) {
+          this.showToast('Copy failed. Try manual copy.', 'warning');
+        }
+        setTimeout(() => {
+          display.textContent = this.roomSaltBase64 || original;
+        }, 2000);
       }
 
       resetMessageCounters() {
@@ -742,17 +880,19 @@ Password: [share securely via a different channel]
         return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
       }
 
-      copyRoomCode() {
+      async copyRoomCode() {
         const roomCodeEl = DOM.roomCode;
         const code = roomCodeEl?.textContent;
-        if (roomCodeEl && code && code !== 'Loading...' && typeof navigator?.clipboard?.writeText === 'function') {
-          navigator.clipboard.writeText(code).then(() => {
-            const original = roomCodeEl.textContent;
-            roomCodeEl.textContent = '✅ Copied!';
-            setTimeout(() => {
-              roomCodeEl.textContent = original;
-            }, 2000);
-          });
+        if (roomCodeEl && code && code !== 'Loading...') {
+          const success = await this.copyText(code);
+          const original = roomCodeEl.textContent;
+          roomCodeEl.textContent = success ? '✅ Copied!' : '⚠️ Copy failed';
+          if (!success) {
+            this.showToast('Copy failed. Use manual copy instead.', 'warning');
+          }
+          setTimeout(() => {
+            roomCodeEl.textContent = original;
+          }, 2000);
         }
       }
 
@@ -944,6 +1084,9 @@ Password: [share securely via a different channel]
       }
 
       async startKeyExchange() {
+        if (!this.flags.enableECDH) {
+          return;
+        }
         if (this.sentKeyExchange || !this.conn || !crypto?.subtle) {
           return;
         }
@@ -971,6 +1114,9 @@ Password: [share securely via a different channel]
       }
 
       async handleKeyExchangeMessage(message) {
+        if (!this.flags.enableECDH) {
+          return;
+        }
         if (this.keyExchangeComplete) {
           return;
         }
@@ -993,6 +1139,9 @@ Password: [share securely via a different channel]
       }
 
       async applySharedSecret(sharedSecret) {
+        if (!this.flags.enableECDH) {
+          return;
+        }
         if (!(sharedSecret instanceof Uint8Array) || sharedSecret.length === 0) {
           return;
         }
@@ -1189,12 +1338,12 @@ Password: [share securely via a different channel]
         }
 
         input.value = '';
-        const timestamp = Date.now();
+        const sentAtLocal = this.getMonotonicTime();
 
         const envelope = {
           kind: 'data',
           n: this.outgoingMessageNumber,
-          sentAt: timestamp,
+          sentAt: sentAtLocal,
           data: { text }
         };
 
@@ -1220,7 +1369,16 @@ Password: [share securely via a different channel]
           const messageId = generateId('msg-');
           const event = makeEvent(
             'MessagePosted',
-            { roomId: this.roomId, messageId, userId: this.localUserId, text, type: 'me' },
+            {
+              roomId: this.roomId,
+              messageId,
+              userId: this.localUserId,
+              text,
+              type: 'me',
+              sentAt: sentAtLocal,
+              sentAtLocal,
+              receivedAt: sentAtLocal
+            },
             this.localUserId,
             [`room:${this.roomId}`, `msg:${messageId}`]
           );
@@ -1241,10 +1399,14 @@ Password: [share securely via a different channel]
       }
 
       toggleEncryptedView() {
+        if (!this.flags.showEncryptedView) {
+          return;
+        }
         this.showEncrypted = !this.showEncrypted;
         const toggle = DOM.encryptedToggle;
         if (toggle) {
           toggle.classList.toggle('active', this.showEncrypted);
+          toggle.setAttribute('aria-pressed', this.showEncrypted ? 'true' : 'false');
         }
         this.renderChatMessages();
       }
@@ -1262,13 +1424,34 @@ Password: [share securely via a different channel]
           id: msg.id,
           text: msg.content,
           type: msg.type === 'me' ? 'me' : 'them',
-          at: msg.at,
+          at: msg.displayAt ?? msg.at,
+          displayAt: msg.displayAt ?? msg.at,
+          receivedAt: msg.receivedAt ?? msg.displayAt ?? msg.at,
+          sentAt: msg.sentAt ?? msg.at,
+          sentAtLocal: msg.sentAtLocal ?? msg.sentAt ?? msg.at,
+          localOrder: msg.localOrder || 0,
           encrypted: this.encryptedCache.get(msg.id) || null,
           editedAt: msg.editedAt
         }));
 
         const combined = [...messageEntries, ...this.systemLog];
-        combined.sort((a, b) => (a.at || 0) - (b.at || 0));
+        combined.sort((a, b) => {
+          const timeA = a.displayAt ?? a.at ?? 0;
+          const timeB = b.displayAt ?? b.at ?? 0;
+          if (timeA !== timeB) {
+            return timeA - timeB;
+          }
+          const orderA = (a.localOrder ?? a.order ?? 0);
+          const orderB = (b.localOrder ?? b.order ?? 0);
+          if (orderA !== orderB) {
+            return orderA - orderB;
+          }
+          const receivedDiff = (a.receivedAt ?? timeA) - (b.receivedAt ?? timeB);
+          if (receivedDiff !== 0) {
+            return receivedDiff;
+          }
+          return (a.sentAt ?? timeA) - (b.sentAt ?? timeB);
+        });
 
         container.innerHTML = '';
 
@@ -1296,7 +1479,7 @@ Password: [share securely via a different channel]
       }
 
       createPlainMessageElement(entry) {
-        const { text, type, at } = entry;
+        const { text, type, receivedAt, displayAt } = entry;
         const message = document.createElement('div');
         message.className = `message ${type}`;
 
@@ -1309,7 +1492,8 @@ Password: [share securely via a different channel]
 
         const timeEl = document.createElement('div');
         timeEl.className = 'message-time';
-        timeEl.textContent = this.formatTimestamp(at);
+        const shownTime = typeof receivedAt === 'number' ? receivedAt : displayAt;
+        timeEl.textContent = this.formatTimestamp(shownTime);
 
         content.appendChild(textEl);
         content.appendChild(timeEl);
@@ -1319,7 +1503,7 @@ Password: [share securely via a different channel]
       }
 
       createEncryptedMessageElement(entry) {
-        const { encrypted, type, at } = entry;
+        const { encrypted, type, receivedAt, displayAt } = entry;
         const payload = encrypted instanceof Uint8Array ? encrypted : this.toUint8Array(encrypted);
 
         if (!(payload instanceof Uint8Array) || payload.length === 0) {
@@ -1362,7 +1546,8 @@ Password: [share securely via a different channel]
         if (cipherHexInfo.truncated) {
           segments.push('Preview limited to first 60 bytes');
         }
-        segments.push(this.formatTimestamp(at));
+        const shownTime = typeof receivedAt === 'number' ? receivedAt : displayAt;
+        segments.push(this.formatTimestamp(shownTime));
         info.textContent = segments.join(' • ');
 
         wrapper.appendChild(ivLabel);
@@ -1378,7 +1563,7 @@ Password: [share securely via a different channel]
       }
 
       createEncryptedPlaceholderElement(entry) {
-        const { type, at } = entry;
+        const { type, receivedAt, displayAt } = entry;
         const message = document.createElement('div');
         message.className = `message ${type} encrypted-view`;
 
@@ -1398,7 +1583,8 @@ Password: [share securely via a different channel]
 
         const info = document.createElement('div');
         info.className = 'data-info';
-        info.textContent = this.formatTimestamp(at);
+        const shownTime = typeof receivedAt === 'number' ? receivedAt : displayAt;
+        info.textContent = this.formatTimestamp(shownTime);
 
         wrapper.appendChild(label);
         wrapper.appendChild(details);
@@ -1514,11 +1700,20 @@ Password: [share securely via a different channel]
       }
 
       addSystemMessage(text) {
+        const timestamp = this.getMonotonicTime();
+        this.systemOrderCounter += 1;
         this.systemLog.push({
           kind: 'system',
           text,
-          at: Date.now()
+          at: timestamp,
+          displayAt: timestamp,
+          receivedAt: timestamp,
+          localOrder: this.systemOrderCounter,
+          order: this.systemOrderCounter
         });
+        if (this.systemAnnouncements) {
+          this.systemAnnouncements.textContent = text;
+        }
         this.renderChatMessages();
       }
 

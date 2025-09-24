@@ -18,7 +18,7 @@
 
 </head>
 <body>
-  <div class="app">
+  <div class="app" role="main">
     <!-- Header -->
     <div class="header">
       <div class="logo">
@@ -86,7 +86,7 @@
           <h2>Create Secure Room</h2>
           <p style="color: var(--text-secondary); text-align: center; margin-bottom: 1rem;">Share this room code with someone you trust</p>
           
-          <div class="room-code-display" id="roomCode" onclick="App.copyRoomCode()">
+          <div class="room-code-display" id="roomCode" onclick="App.copyRoomCode()" role="button" tabindex="0" aria-label="Copy room code">
             Loading...
           </div>
           
@@ -101,14 +101,14 @@
           
           <div id="shareSection" class="share-section" style="display: none;">
             <p class="share-note">📤 Share this invite link with your guest. Send the password using a different channel.</p>
-            <div class="share-link" id="shareLink" onclick="App.copyShareLink()">
+            <div class="share-link" id="shareLink" onclick="App.copyShareLink()" role="button" tabindex="0" aria-label="Copy invite link">
               Generating link...
             </div>
             <button class="btn btn-primary" style="width: 100%; margin-bottom: 1rem;" onclick="App.copyShareLink()">📋 Copy Link</button>
 
             <div class="salt-section">
               <div class="salt-label">Room Salt (safe to share)</div>
-              <div class="share-link" id="roomSaltDisplay" onclick="App.copyRoomSalt()">
+              <div class="share-link" id="roomSaltDisplay" onclick="App.copyRoomSalt()" role="button" tabindex="0" aria-label="Copy room salt">
                 Generating salt...
               </div>
               <div class="input-hint">The salt is also included in the invite link for convenience.</div>
@@ -174,7 +174,7 @@
             <div class="room-badge" id="currentRoom">xxx-xxx-xxx</div>
           </div>
           <div class="view-toggles">
-            <button id="encryptedToggle" class="toggle-btn" onclick="App.toggleEncryptedView()">
+            <button id="encryptedToggle" class="toggle-btn" onclick="App.toggleEncryptedView()" aria-pressed="false">
               <span>🔍</span>
               Encrypted View
             </button>
@@ -188,13 +188,13 @@
           </button>
         </div>
 
-        <div id="waitingBanner" class="waiting-banner">
+        <div id="waitingBanner" class="waiting-banner" role="status" aria-live="polite">
           <div class="waiting-icon">⏳</div>
           <div class="waiting-details">
             <div class="waiting-title">Waiting for your guest</div>
             <div id="waitingMessage" class="waiting-subtitle">Share the invite link below to bring someone into this secure room.</div>
             <div class="waiting-link-row">
-              <div id="chatShareLink" class="chat-share-link" onclick="App.copyShareLink('chatShareLink')">
+              <div id="chatShareLink" class="chat-share-link" onclick="App.copyShareLink('chatShareLink')" role="button" tabindex="0" aria-label="Copy chat invite link">
                 Generating link...
               </div>
               <button id="chatCopyLink" class="btn btn-secondary" onclick="App.copyShareLink('chatShareLink')" disabled>
@@ -204,7 +204,8 @@
           </div>
         </div>
 
-        <div id="chatMessages" class="chat-messages">
+        <div id="systemAnnouncements" class="sr-only" aria-live="polite" aria-atomic="false"></div>
+        <div id="chatMessages" class="chat-messages" role="log" aria-live="polite">
           <!-- Messages will appear here -->
         </div>
 
