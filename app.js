@@ -49,7 +49,8 @@ const DOM = {
   identityHint: document.getElementById('identityHint'),
   identityUseNew: document.getElementById('identityUseNew'),
   identityError: document.getElementById('identityError'),
-  identitySubmitBtn: document.getElementById('identitySubmitBtn')
+  identitySubmitBtn: document.getElementById('identitySubmitBtn'),
+  workspaceHub: document.getElementById('workspaceHub')
 };
 
 const DEFAULT_FEATURE_FLAGS = {
@@ -295,6 +296,1473 @@ class MessageDetailsModal {
     return remaining > 0 ? `${minutes}m ${remaining.toFixed(1)}s` : `${minutes}m`;
   }
 }
+
+const WORKSPACE_STORAGE_KEY = 'workspaceHub.v1';
+
+class WorkspaceStore {
+  constructor(storageKey = WORKSPACE_STORAGE_KEY) {
+    this.storageKey = storageKey;
+    this.state = this.load();
+  }
+
+  load() {
+    const empty = { profile: null, workspaces: {} };
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return empty;
+    }
+
+    try {
+      const raw = window.localStorage.getItem(this.storageKey);
+      if (!raw) {
+        return empty;
+      }
+
+      const parsed = JSON.parse(raw);
+      return {
+        profile: parsed && typeof parsed.profile === 'object' ? parsed.profile : null,
+        workspaces: parsed && parsed.workspaces && typeof parsed.workspaces === 'object' ? parsed.workspaces : {}
+      };
+    } catch (error) {
+      console.warn('Failed to load workspace state.', error);
+      return empty;
+    }
+  }
+
+  persist() {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(this.storageKey, JSON.stringify(this.state));
+    } catch (error) {
+      console.warn('Failed to persist workspace state.', error);
+    }
+  }
+
+  getProfile() {
+    return this.state.profile || null;
+  }
+
+  updateProfile(partial) {
+    const existing = this.getProfile() || {};
+    const next = { ...existing, ...partial };
+    if (!next.id) {
+      next.id = this.generateId('profile');
+    }
+    this.state.profile = next;
+    this.persist();
+    return next;
+  }
+
+  ensureProfile() {
+    const profile = this.getProfile();
+    if (profile && profile.id) {
+      return profile;
+    }
+    const generated = { id: this.generateId('profile') };
+    this.state.profile = generated;
+    this.persist();
+    return generated;
+  }
+
+  listWorkspaces() {
+    const workspaces = this.state.workspaces || {};
+    return Object.values(workspaces).sort((a, b) => (b.created || 0) - (a.created || 0));
+  }
+
+  getWorkspace(id) {
+    if (!id) {
+      return null;
+    }
+    const workspaces = this.state.workspaces || {};
+    return workspaces[id] || null;
+  }
+
+  saveWorkspace(workspace) {
+    if (!workspace || !workspace.id) {
+      return null;
+    }
+    this.state.workspaces = this.state.workspaces || {};
+    this.state.workspaces[workspace.id] = workspace;
+    this.persist();
+    return workspace;
+  }
+
+  removeWorkspace(id) {
+    if (!id || !this.state.workspaces) {
+      return;
+    }
+    delete this.state.workspaces[id];
+    this.persist();
+  }
+
+  generateId(prefix) {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    const random = Math.random().toString(36).slice(2, 10);
+    return `${prefix || 'id'}-${Date.now()}-${random}`;
+  }
+}
+
+class WorkspaceHub {
+  constructor(container) {
+    this.container = container;
+    if (!this.container) {
+      return;
+    }
+
+    this.store = new WorkspaceStore();
+    this.selectedWorkspaceId = null;
+    this.joinWorkspaceId = null;
+    this.flash = null;
+    this.createFormState = {
+      name: '',
+      id: '',
+      description: '',
+      access: 'invite',
+      approvalCount: '1',
+      adminOnly: false,
+      autoReject: true,
+      allowedDomains: ''
+    };
+    this.joinFormState = {
+      message: ''
+    };
+    this.userEditedCreateId = false;
+
+    this.render();
+    this.attachEventHandlers();
+    this.syncFromHash();
+  }
+
+  attachEventHandlers() {
+    this.handleSubmit = this.handleSubmit.bind(this);
+    this.handleInput = this.handleInput.bind(this);
+    this.handleChange = this.handleChange.bind(this);
+    this.handleClick = this.handleClick.bind(this);
+    this.handleHashChange = this.handleHashChange.bind(this);
+
+    this.container.addEventListener('submit', this.handleSubmit);
+    this.container.addEventListener('input', this.handleInput);
+    this.container.addEventListener('change', this.handleChange);
+    this.container.addEventListener('click', this.handleClick);
+    window.addEventListener('hashchange', this.handleHashChange);
+  }
+
+  handleHashChange() {
+    this.syncFromHash();
+  }
+
+  setFlash(type, message) {
+    if (!message) {
+      this.flash = null;
+      return;
+    }
+    this.flash = { type, message, id: Date.now() };
+  }
+
+  clearFlash() {
+    this.flash = null;
+  }
+
+  handleSubmit(event) {
+    if (!(event.target instanceof HTMLFormElement)) {
+      return;
+    }
+
+    const form = event.target;
+    if (form.id === 'workspaceProfileForm') {
+      event.preventDefault();
+      this.saveProfile(new FormData(form));
+    } else if (form.id === 'workspaceCreateForm') {
+      event.preventDefault();
+      this.submitCreateWorkspace(new FormData(form));
+    } else if (form.id === 'workspaceJoinForm') {
+      event.preventDefault();
+      this.submitJoinRequest(new FormData(form));
+    } else if (form.id === 'workspaceSettingsForm') {
+      event.preventDefault();
+      const workspaceId = form.dataset.workspaceId;
+      this.saveWorkspaceSettings(workspaceId, new FormData(form));
+    }
+  }
+
+  handleInput(event) {
+    const { target } = event;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+
+    if (target.id === 'workspaceCreateName') {
+      this.createFormState.name = target.value;
+      if (!this.userEditedCreateId) {
+        const suggested = this.slugify(target.value);
+        this.createFormState.id = suggested;
+        const idInput = this.container.querySelector('#workspaceCreateId');
+        if (idInput) {
+          idInput.value = suggested;
+        }
+      }
+    }
+
+    if (target.id === 'workspaceCreateId') {
+      this.userEditedCreateId = true;
+      this.createFormState.id = target.value;
+    }
+
+    if (target.id === 'workspaceCreateDesc') {
+      this.createFormState.description = target.value;
+    }
+
+    if (target.id === 'workspaceAllowedDomains') {
+      this.createFormState.allowedDomains = target.value;
+    }
+
+    if (target.id === 'workspaceJoinMessage') {
+      this.joinFormState.message = target.value;
+    }
+  }
+
+  handleChange(event) {
+    const { target } = event;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+
+    if (target.name === 'workspaceAccess') {
+      this.createFormState.access = target.value;
+      this.render();
+      return;
+    }
+
+    if (target.id === 'workspaceApprovalCount') {
+      this.createFormState.approvalCount = target.value;
+      return;
+    }
+
+    if (target.id === 'workspaceAdminOnly') {
+      this.createFormState.adminOnly = target.checked;
+      return;
+    }
+
+    if (target.id === 'workspaceAutoReject') {
+      this.createFormState.autoReject = target.checked;
+      return;
+    }
+
+    if (target.id === 'workspaceJoinSelect') {
+      this.joinWorkspaceId = target.value || null;
+      this.render();
+      return;
+    }
+  }
+
+  handleClick(event) {
+    const actionEl = event.target instanceof HTMLElement ? event.target.closest('[data-action]') : null;
+    if (!actionEl) {
+      return;
+    }
+
+    const action = actionEl.dataset.action;
+    if (action === 'select-workspace') {
+      const workspaceId = actionEl.dataset.id;
+      this.selectWorkspace(workspaceId);
+    } else if (action === 'approve-request') {
+      const workspaceId = actionEl.dataset.workspaceId;
+      const requestId = actionEl.dataset.requestId;
+      this.recordApproval(workspaceId, requestId, true);
+    } else if (action === 'reject-request') {
+      const workspaceId = actionEl.dataset.workspaceId;
+      const requestId = actionEl.dataset.requestId;
+      this.recordApproval(workspaceId, requestId, false);
+    } else if (action === 'make-admin') {
+      const workspaceId = actionEl.dataset.workspaceId;
+      const memberId = actionEl.dataset.memberId;
+      this.promoteMember(workspaceId, memberId);
+    } else if (action === 'remove-member') {
+      const workspaceId = actionEl.dataset.workspaceId;
+      const memberId = actionEl.dataset.memberId;
+      this.removeMember(workspaceId, memberId);
+    } else if (action === 'generate-invite') {
+      const workspaceId = actionEl.dataset.workspaceId;
+      this.generateInvite(workspaceId);
+    } else if (action === 'revoke-invite') {
+      const workspaceId = actionEl.dataset.workspaceId;
+      const inviteId = actionEl.dataset.inviteId;
+      this.revokeInvite(workspaceId, inviteId);
+    } else if (action === 'join-with-code') {
+      this.joinWithInviteCode();
+    } else if (action === 'copy-workspace-url') {
+      const workspaceId = actionEl.dataset.workspaceId;
+      this.copyWorkspaceUrl(workspaceId);
+    }
+  }
+
+  syncFromHash() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const hash = window.location.hash || '';
+    const match = hash.match(/#\/?workspace\/?\/?([^/?]+)/i) || hash.match(/#\/([^/?]+)/);
+    if (match && match[1]) {
+      const workspaceId = decodeURIComponent(match[1]);
+      const workspace = this.store.getWorkspace(workspaceId);
+      if (workspace) {
+        this.selectedWorkspaceId = workspaceId;
+        if (!this.joinWorkspaceId) {
+          this.joinWorkspaceId = workspaceId;
+        }
+        this.render();
+      }
+    }
+  }
+
+  updateHash(workspaceId) {
+    if (typeof window === 'undefined' || !workspaceId) {
+      return;
+    }
+    window.location.hash = `#/workspace/${workspaceId}`;
+  }
+
+  formatBaseUrl() {
+    if (typeof window !== 'undefined' && window.location) {
+      return `${window.location.origin || ''}/#/`;
+    }
+    return '#/';
+  }
+
+  render() {
+    if (!this.container) {
+      return;
+    }
+
+    const profile = this.store.getProfile() || {};
+    const workspaces = this.store.listWorkspaces();
+    this.ensureSelections(workspaces, profile);
+
+    const selectedWorkspace = this.selectedWorkspaceId
+      ? this.store.getWorkspace(this.selectedWorkspaceId)
+      : null;
+
+    if (selectedWorkspace) {
+      this.cleanExpiredInvites(selectedWorkspace);
+    }
+
+    const markup = `
+      <div class="workspace-panel">
+        <div class="workspace-panel-header">
+          <h2>Persistent Workspaces</h2>
+          <p>Create Slack-style spaces with approvals, roles, and invite management.</p>
+        </div>
+        ${this.flash ? `<div class="workspace-flash ${escapeHTML(this.flash.type)}">${escapeHTML(this.flash.message)}</div>` : ''}
+        <div class="workspace-grid">
+          ${this.renderProfileCard(profile)}
+          ${this.renderCreateCard(profile)}
+          ${this.renderJoinCard(workspaces, profile)}
+        </div>
+        ${this.renderWorkspaceList(workspaces)}
+        ${selectedWorkspace ? this.renderWorkspaceDetail(selectedWorkspace, profile) : ''}
+      </div>
+    `;
+
+    this.container.innerHTML = markup;
+  }
+
+  ensureSelections(workspaces, profile) {
+    if (this.selectedWorkspaceId && !this.store.getWorkspace(this.selectedWorkspaceId)) {
+      this.selectedWorkspaceId = null;
+    }
+
+    const notMember = workspaces.filter((workspace) => !this.isMember(workspace, profile && profile.id));
+    if (!this.joinWorkspaceId || !this.store.getWorkspace(this.joinWorkspaceId) || this.isMember(this.store.getWorkspace(this.joinWorkspaceId), profile && profile.id)) {
+      this.joinWorkspaceId = notMember.length > 0 ? notMember[0].id : null;
+    }
+  }
+
+  renderProfileCard(profile) {
+    const name = profile && typeof profile.name === 'string' ? profile.name : '';
+    const email = profile && typeof profile.email === 'string' ? profile.email : '';
+
+    return `
+      <section class="workspace-card" aria-label="Workspace identity">
+        <h3>Your workspace identity</h3>
+        <p class="workspace-description">Use this name when creating workspaces or requesting access.</p>
+        <form id="workspaceProfileForm">
+          <div class="workspace-field">
+            <label for="workspaceProfileName">Display name</label>
+            <input id="workspaceProfileName" name="name" required maxlength="80" placeholder="e.g., Casey" value="${escapeHTML(name)}" autocomplete="name">
+          </div>
+          <div class="workspace-field">
+            <label for="workspaceProfileEmail">Email (optional)</label>
+            <input id="workspaceProfileEmail" name="email" type="email" placeholder="you@example.com" value="${escapeHTML(email)}" autocomplete="email">
+            <span class="workspace-small-note">Emails unlock domain-based auto approvals.</span>
+          </div>
+          <button type="submit" class="btn btn-secondary">Save identity</button>
+        </form>
+      </section>
+    `;
+  }
+
+  renderCreateCard(profile) {
+    const state = this.createFormState;
+    const access = state.access || 'invite';
+    const approval = state.approvalCount || '1';
+    const allowedDomains = state.allowedDomains || '';
+    const autoReject = state.autoReject !== false;
+    const adminOnly = state.adminOnly === true;
+
+    return `
+      <section class="workspace-card" aria-label="Create workspace">
+        <h3>Create a workspace</h3>
+        <p class="workspace-description">Persistent URLs, approval queues, and member roles in a few clicks.</p>
+        <form id="workspaceCreateForm">
+          <div class="workspace-field">
+            <label for="workspaceCreateName">Workspace name</label>
+            <input id="workspaceCreateName" name="name" required maxlength="50" placeholder="e.g., Acme Team" value="${escapeHTML(state.name)}">
+          </div>
+          <div class="workspace-field">
+            <label for="workspaceCreateId">Workspace URL</label>
+            <input id="workspaceCreateId" name="id" required pattern="[a-z0-9-]+" maxlength="40" placeholder="acme-team" value="${escapeHTML(state.id)}">
+            <span class="workspace-small-note">${escapeHTML(this.formatBaseUrl())}${escapeHTML(state.id)}</span>
+          </div>
+          <div class="workspace-field">
+            <label for="workspaceCreateDesc">Description (optional)</label>
+            <textarea id="workspaceCreateDesc" name="description" rows="2" placeholder="What's this workspace for?">${escapeHTML(state.description)}</textarea>
+          </div>
+          <div class="workspace-field">
+            <label>Join method</label>
+            <div class="workspace-radio-group" role="radiogroup">
+              <label class="workspace-radio-option">
+                <input type="radio" name="workspaceAccess" value="invite" ${access === 'invite' ? 'checked' : ''}>
+                <div>
+                  <strong>Invite only</strong>
+                  <span>Members join using single-use invite links.</span>
+                </div>
+              </label>
+              <label class="workspace-radio-option">
+                <input type="radio" name="workspaceAccess" value="approval" ${access === 'approval' ? 'checked' : ''}>
+                <div>
+                  <strong>Request to join</strong>
+                  <span>People can request access and members approve.</span>
+                </div>
+              </label>
+              <label class="workspace-radio-option">
+                <input type="radio" name="workspaceAccess" value="domain" ${access === 'domain' ? 'checked' : ''}>
+                <div>
+                  <strong>Domain restricted</strong>
+                  <span>Auto-approve emails from trusted domains.</span>
+                </div>
+              </label>
+            </div>
+          </div>
+          <div class="workspace-field" ${access === 'domain' ? '' : 'style="display:none;"'}>
+            <label for="workspaceAllowedDomains">Allowed domains</label>
+            <textarea id="workspaceAllowedDomains" name="allowedDomains" rows="2" placeholder="@company.com&#10;@partners.io">${escapeHTML(allowedDomains)}</textarea>
+            <span class="workspace-small-note">One domain per line. Include @ or plain domain.</span>
+          </div>
+          <div class="workspace-field" ${access === 'approval' ? '' : 'style="display:none;"'}>
+            <label for="workspaceApprovalCount">Approvals required</label>
+            <select id="workspaceApprovalCount" name="approvalCount">
+              ${['1', '2', '3', 'majority', 'all'].map((value) => `<option value="${value}" ${approval === value ? 'selected' : ''}>${this.describeApprovalOption(value)}</option>`).join('')}
+            </select>
+            <label class="workspace-inline" for="workspaceAdminOnly">
+              <span class="workspace-small-note">Only admins can approve</span>
+              <input type="checkbox" id="workspaceAdminOnly" name="adminOnly" ${adminOnly ? 'checked' : ''}>
+            </label>
+            <label class="workspace-inline" for="workspaceAutoReject">
+              <span class="workspace-small-note">Auto-reject after 48 hours</span>
+              <input type="checkbox" id="workspaceAutoReject" name="autoReject" ${autoReject ? 'checked' : ''}>
+            </label>
+          </div>
+          <button type="submit" class="btn btn-primary" ${profile && profile.name ? '' : 'disabled'}>Create workspace</button>
+          ${profile && profile.name ? '' : '<p class="workspace-small-note">Set your workspace identity to enable creation.</p>'}
+        </form>
+      </section>
+    `;
+  }
+
+  renderJoinCard(workspaces, profile) {
+    const available = workspaces.filter((workspace) => !this.isMember(workspace, profile && profile.id));
+    const selected = this.joinWorkspaceId ? this.store.getWorkspace(this.joinWorkspaceId) : (available[0] || null);
+    const profileName = profile && profile.name;
+    const pending = this.pendingRequestsForProfile(profile && profile.id);
+    const messageValue = this.joinFormState.message || '';
+
+    const requestDisabled = !selected || selected.settings.access === 'invite' || !profileName;
+
+    return `
+      <section class="workspace-card" aria-label="Join workspace">
+        <h3>Join an existing workspace</h3>
+        <p class="workspace-description">Request access or redeem a single-use invite code.</p>
+        ${available.length === 0 ? '<p class="workspace-muted">No open workspaces yet. Create one above or ask for an invite code.</p>' : `
+          <form id="workspaceJoinForm">
+            <div class="workspace-field">
+              <label for="workspaceJoinSelect">Workspace</label>
+              <select id="workspaceJoinSelect" name="workspaceId">
+                ${available.map((workspace) => `<option value="${workspace.id}" ${selected && selected.id === workspace.id ? 'selected' : ''}>${escapeHTML(workspace.name || workspace.id)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="workspace-field">
+              <label for="workspaceJoinMessage">Message to admins</label>
+              <textarea id="workspaceJoinMessage" name="message" rows="2" placeholder="Why do you want to join?">${escapeHTML(messageValue)}</textarea>
+            </div>
+            ${selected ? this.renderJoinHint(selected, profile) : ''}
+            <button type="submit" class="btn btn-primary" ${requestDisabled ? 'disabled' : ''}>Request access</button>
+          </form>
+        `}
+        <div class="workspace-field" style="margin-top: 0.5rem;">
+          <label for="workspaceJoinCode">Have an invite code?</label>
+          <div class="workspace-inline">
+            <input id="workspaceJoinCode" name="inviteCode" placeholder="paste-code-here" maxlength="80">
+            <button type="button" class="btn btn-secondary" data-action="join-with-code">Use code</button>
+          </div>
+        </div>
+        ${pending.length > 0 ? `
+          <div class="workspace-pending">
+            <h4 style="margin: 0; font-size: 1rem;">Your pending requests</h4>
+            ${pending.map((request) => this.renderPendingStatus(request)).join('')}
+          </div>
+        ` : ''}
+      </section>
+    `;
+  }
+
+  renderJoinHint(workspace, profile) {
+    const email = profile && profile.email;
+    const access = workspace.settings.access;
+    if (access === 'invite') {
+      return '<p class="workspace-muted">This workspace requires an invite link. Ask an admin for access.</p>';
+    }
+
+    if (access === 'domain') {
+      if (email && this.isDomainAllowed(workspace.settings.allowedDomains, email)) {
+        return '<p class="workspace-muted">✅ Your email domain qualifies for instant access.</p>';
+      }
+      return '<p class="workspace-muted">Provide an email matching an approved domain for instant access.</p>';
+    }
+
+    return '<p class="workspace-muted">Request will notify workspace members for approval.</p>';
+  }
+
+  renderPendingStatus(request) {
+    const approvals = Array.isArray(request.approvals) ? request.approvals.length : 0;
+    const rejections = Array.isArray(request.rejections) ? request.rejections.length : 0;
+    const status = request.status || 'pending';
+    const statusLabel = status === 'approved'
+      ? 'Approved'
+      : status === 'rejected'
+        ? 'Rejected'
+        : 'Pending';
+
+    return `
+      <div class="workspace-request-card" data-request-status="${escapeHTML(status)}">
+        <div class="workspace-request-header">
+          <div class="workspace-request-meta">
+            <strong>${escapeHTML(request.workspaceName || '')}</strong>
+            <span>Requested ${this.formatRelativeTime(request.timestamp)}</span>
+          </div>
+          <div class="workspace-request-meta">
+            <span>${approvals} approvals</span>
+            <span>${rejections} rejections</span>
+            <span>Status: ${escapeHTML(statusLabel)}</span>
+          </div>
+        </div>
+        ${request.requester && request.requester.message ? `<div class="workspace-muted">${escapeHTML(request.requester.message)}</div>` : ''}
+      </div>
+    `;
+  }
+
+  renderWorkspaceList(workspaces) {
+    return `
+      <section class="workspace-card" aria-label="Workspace list">
+        <div class="workspace-inline">
+          <h3 style="margin: 0;">Your workspaces</h3>
+          <span class="workspace-badge">${workspaces.length} total</span>
+        </div>
+        ${workspaces.length === 0 ? '<div class="workspace-empty">Create a workspace to get started.</div>' : `
+          <div class="workspace-list">
+            ${workspaces.map((workspace) => this.renderWorkspaceListItem(workspace)).join('')}
+          </div>
+        `}
+      </section>
+    `;
+  }
+
+  renderWorkspaceListItem(workspace) {
+    const memberCount = Array.isArray(workspace.members) ? workspace.members.length : 0;
+    const isActive = this.selectedWorkspaceId === workspace.id;
+    return `
+      <div class="workspace-list-item ${isActive ? 'active' : ''}" data-action="select-workspace" data-id="${workspace.id}" role="button" tabindex="0">
+        <div class="workspace-meta">
+          <span class="workspace-name">${escapeHTML(workspace.name || workspace.id)}</span>
+          <span class="workspace-url">#/${escapeHTML(workspace.id)}</span>
+        </div>
+        <span class="workspace-badge">${memberCount} member${memberCount === 1 ? '' : 's'}</span>
+      </div>
+    `;
+  }
+
+  renderWorkspaceDetail(workspace, profile) {
+    const members = Array.isArray(workspace.members) ? workspace.members : [];
+    const pending = Array.isArray(workspace.pendingRequests) ? workspace.pendingRequests : [];
+    const invites = Array.isArray(workspace.activeInvites) ? workspace.activeInvites : [];
+    const isAdmin = this.isAdmin(workspace, profile && profile.id);
+    const accessLabel = this.describeAccess(workspace.settings);
+    const approvalsLabel = this.describeApproval(workspace);
+    const url = `${this.formatBaseUrl()}${workspace.id}`;
+
+    return `
+      <section class="workspace-card workspace-detail" aria-label="Workspace details">
+        <div class="workspace-detail-header">
+          <h3>${escapeHTML(workspace.name)}</h3>
+          <span class="workspace-subtitle">${escapeHTML(workspace.description || 'Private workspace')}</span>
+          <div class="workspace-tags">
+            <span class="workspace-pills">${escapeHTML(url)}</span>
+            <span class="workspace-pills">${escapeHTML(accessLabel)}</span>
+            <span class="workspace-pills">${escapeHTML(approvalsLabel)}</span>
+          </div>
+          <div class="workspace-inline">
+            <span class="workspace-subtle">Created ${this.formatRelativeTime(workspace.created)}</span>
+            <button type="button" class="btn btn-secondary" data-action="copy-workspace-url" data-workspace-id="${workspace.id}">Copy URL</button>
+          </div>
+        </div>
+        <div>
+          <h4 style="margin-bottom: 0.75rem;">Members (${members.length})</h4>
+          <div class="workspace-members">
+            ${members.map((member) => this.renderMemberRow(workspace, member, profile, isAdmin)).join('')}
+          </div>
+        </div>
+        <hr class="workspace-divider">
+        <div>
+          <h4 style="margin-bottom: 0.75rem;">Pending requests (${pending.length})</h4>
+          ${pending.length === 0 ? '<p class="workspace-muted">No pending requests right now.</p>' : `
+            <div class="workspace-pending">
+              ${pending.map((request) => this.renderPendingRequest(workspace, request, profile, isAdmin)).join('')}
+            </div>
+          `}
+        </div>
+        ${isAdmin ? `
+          <hr class="workspace-divider">
+          <div>
+            <div class="workspace-inline" style="align-items: flex-start;">
+              <div>
+                <h4 style="margin: 0;">Invite links</h4>
+                <p class="workspace-small-note">Generate single-use invites and revoke them anytime.</p>
+              </div>
+              <button type="button" class="btn btn-secondary" data-action="generate-invite" data-workspace-id="${workspace.id}">Generate invite</button>
+            </div>
+            ${invites.length === 0 ? '<p class="workspace-muted">No active invites.</p>' : `
+              <div class="workspace-invite-list">
+                ${invites.map((invite) => this.renderInviteItem(workspace, invite)).join('')}
+              </div>
+            `}
+          </div>
+          <hr class="workspace-divider">
+          ${this.renderSettingsForm(workspace)}
+        ` : ''}
+      </section>
+    `;
+  }
+
+  renderMemberRow(workspace, member, profile, isAdmin) {
+    const joinedLabel = member.joinedAt ? `Joined ${this.formatRelativeTime(member.joinedAt)}` : '';
+    const canPromote = isAdmin && member.role !== 'admin';
+    const canRemove = isAdmin && profile && profile.id !== member.id;
+
+    return `
+      <div class="workspace-member-row">
+        <div class="workspace-member-info">
+          <span class="workspace-member-name">${escapeHTML(member.displayName || member.name || member.email || 'Member')}</span>
+          <span class="workspace-member-role">${escapeHTML(member.role === 'admin' ? 'Admin' : 'Member')}${joinedLabel ? ` • ${escapeHTML(joinedLabel)}` : ''}</span>
+        </div>
+        ${canPromote || canRemove ? `
+          <div class="workspace-member-actions">
+            ${canPromote ? `<button type="button" class="btn btn-secondary" data-action="make-admin" data-workspace-id="${workspace.id}" data-member-id="${member.id}">Make admin</button>` : ''}
+            ${canRemove ? `<button type="button" class="btn btn-secondary" data-action="remove-member" data-workspace-id="${workspace.id}" data-member-id="${member.id}">Remove</button>` : ''}
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  renderPendingRequest(workspace, request, profile, isAdmin) {
+    const approvals = Array.isArray(request.approvals) ? request.approvals.length : 0;
+    const rejections = Array.isArray(request.rejections) ? request.rejections.length : 0;
+    const required = this.requiredApprovals(workspace);
+    const alreadyVoted = this.hasVoted(request, profile && profile.id);
+    const canVote = isAdmin || (!workspace.settings.adminOnlyApprove && this.isMember(workspace, profile && profile.id));
+    const voteLabel = alreadyVoted ? `You ${this.getMemberVote(request, profile && profile.id)}` : '';
+
+    return `
+      <div class="workspace-request-card">
+        <div class="workspace-request-header">
+          <div class="workspace-request-meta">
+            <strong>${escapeHTML(request.requester?.name || 'Member')}</strong>
+            <span>${escapeHTML(request.requester?.email || 'No email provided')}</span>
+            <span>Requested ${this.formatRelativeTime(request.timestamp)}</span>
+          </div>
+          <div class="workspace-request-meta">
+            <span>${approvals}/${required} approvals</span>
+            <span>${rejections} rejections</span>
+            <span>Status: ${escapeHTML((request.status || 'pending').toUpperCase())}</span>
+          </div>
+        </div>
+        ${request.requester?.message ? `<div class="workspace-muted">${escapeHTML(request.requester.message)}</div>` : ''}
+        ${alreadyVoted ? `<p class="workspace-muted">${escapeHTML(voteLabel)}</p>` : ''}
+        ${!alreadyVoted && canVote && request.status === 'pending' ? `
+          <div class="workspace-request-actions">
+            <button type="button" class="btn btn-primary" data-action="approve-request" data-workspace-id="${workspace.id}" data-request-id="${request.id}">Approve</button>
+            <button type="button" class="btn btn-secondary" data-action="reject-request" data-workspace-id="${workspace.id}" data-request-id="${request.id}">Reject</button>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  renderInviteItem(workspace, invite) {
+    const expiresAt = invite.expiresAt ? `Expires ${this.formatRelativeTime(invite.expiresAt)}` : 'No expiry';
+    const createdBy = invite.creatorName ? `Created by ${escapeHTML(invite.creatorName)}` : '';
+
+    return `
+      <div class="workspace-invite-item">
+        <div>
+          <div><strong>${escapeHTML(invite.code)}</strong></div>
+          <span>${escapeHTML(expiresAt)}</span>
+          ${createdBy ? `<span>${createdBy}</span>` : ''}
+        </div>
+        <button type="button" class="btn btn-secondary" data-action="revoke-invite" data-workspace-id="${workspace.id}" data-invite-id="${invite.id}">Revoke</button>
+      </div>
+    `;
+  }
+
+  renderSettingsForm(workspace) {
+    const allowed = Array.isArray(workspace.settings.allowedDomains)
+      ? workspace.settings.allowedDomains.join('\n')
+      : '';
+
+    return `
+      <form id="workspaceSettingsForm" data-workspace-id="${workspace.id}">
+        <h4 style="margin-bottom: 0.75rem;">Workspace settings</h4>
+        <div class="workspace-settings-grid">
+          <div class="workspace-field">
+            <label for="workspaceSettingsName">Name</label>
+            <input id="workspaceSettingsName" name="name" required maxlength="50" value="${escapeHTML(workspace.name)}">
+          </div>
+          <div class="workspace-field">
+            <label for="workspaceSettingsDescription">Description</label>
+            <textarea id="workspaceSettingsDescription" name="description" rows="2">${escapeHTML(workspace.description || '')}</textarea>
+          </div>
+        </div>
+        <div class="workspace-field" style="margin-top: 1rem;">
+          <label for="workspaceSettingsAccess">Join method</label>
+          <select id="workspaceSettingsAccess" name="access">
+            ${['invite', 'approval', 'domain'].map((value) => `<option value="${value}" ${workspace.settings.access === value ? 'selected' : ''}>${this.describeAccess({ access: value })}</option>`).join('')}
+          </select>
+        </div>
+        <div class="workspace-field">
+          <label for="workspaceSettingsApprovals">Approvals required</label>
+          <select id="workspaceSettingsApprovals" name="approvalCount">
+            ${['1', '2', '3', 'majority', 'all'].map((value) => `<option value="${value}" ${String(workspace.settings.approvalCount || '1') === value ? 'selected' : ''}>${this.describeApprovalOption(value)}</option>`).join('')}
+          </select>
+        </div>
+        <label class="workspace-inline" for="workspaceSettingsAdminOnly">
+          <span class="workspace-small-note">Only admins can approve requests</span>
+          <input type="checkbox" id="workspaceSettingsAdminOnly" name="adminOnly" ${workspace.settings.adminOnlyApprove ? 'checked' : ''}>
+        </label>
+        <label class="workspace-inline" for="workspaceSettingsAutoReject">
+          <span class="workspace-small-note">Auto-reject after 48 hours</span>
+          <input type="checkbox" id="workspaceSettingsAutoReject" name="autoReject" ${workspace.settings.autoExpireHours ? 'checked' : ''}>
+        </label>
+        <div class="workspace-field">
+          <label for="workspaceSettingsAllowed">Allowed email domains</label>
+          <textarea id="workspaceSettingsAllowed" name="allowedDomains" rows="3" placeholder="@company.com\n@school.edu">${escapeHTML(allowed)}</textarea>
+          <span class="workspace-small-note">Used for domain-restricted or auto-approval workspaces.</span>
+        </div>
+        <button type="submit" class="btn btn-primary">Save settings</button>
+      </form>
+    `;
+  }
+
+  saveProfile(formData) {
+    const name = (formData.get('name') || '').toString().trim();
+    const email = (formData.get('email') || '').toString().trim();
+    if (!name) {
+      this.setFlash('error', 'Display name is required for workspace actions.');
+      this.render();
+      return;
+    }
+    this.store.updateProfile({ name, email });
+    this.setFlash('success', 'Workspace identity saved.');
+    this.render();
+  }
+
+  submitCreateWorkspace(formData) {
+    const profile = this.store.getProfile();
+    if (!profile || !profile.name) {
+      this.setFlash('error', 'Set your workspace identity before creating a workspace.');
+      this.render();
+      return;
+    }
+
+    const name = (formData.get('name') || '').toString().trim();
+    const id = (formData.get('id') || '').toString().trim().toLowerCase();
+    const description = (formData.get('description') || '').toString().trim();
+    const access = (formData.get('workspaceAccess') || this.createFormState.access || 'invite').toString();
+    const approvalCount = (formData.get('approvalCount') || '1').toString();
+    const adminOnly = formData.get('adminOnly') != null;
+    const autoReject = formData.get('autoReject') != null;
+    const allowedDomains = this.parseAllowedDomains(formData.get('allowedDomains'));
+
+    if (!name || !id) {
+      this.setFlash('error', 'Workspace name and URL are required.');
+      this.render();
+      return;
+    }
+
+    if (this.store.getWorkspace(id)) {
+      this.setFlash('error', 'That workspace URL is already in use. Choose another.');
+      this.render();
+      return;
+    }
+
+    const now = Date.now();
+    const workspace = {
+      id,
+      name,
+      description,
+      created: now,
+      settings: {
+        access,
+        approvalCount: access === 'approval' ? approvalCount : '1',
+        adminOnlyApprove: access === 'approval' ? adminOnly : false,
+        autoExpireHours: access === 'approval' && autoReject ? 48 : 0,
+        allowedDomains: access === 'domain' || allowedDomains.length > 0 ? allowedDomains : []
+      },
+      members: [
+        {
+          id: profile.id || this.store.generateId('member'),
+          displayName: profile.name,
+          email: profile.email,
+          role: 'admin',
+          joinedAt: now
+        }
+      ],
+      pendingRequests: [],
+      activeInvites: [],
+      channels: [
+        { id: 'general', name: 'general', description: 'General discussion' }
+      ]
+    };
+
+    this.store.saveWorkspace(workspace);
+    this.selectedWorkspaceId = id;
+    this.joinWorkspaceId = null;
+    this.createFormState = {
+      name: '',
+      id: '',
+      description: '',
+      access: 'invite',
+      approvalCount: '1',
+      adminOnly: false,
+      autoReject: true,
+      allowedDomains: ''
+    };
+    this.userEditedCreateId = false;
+    this.updateHash(id);
+    this.setFlash('success', 'Workspace created. Invite teammates or configure settings below.');
+    this.render();
+  }
+
+  parseAllowedDomains(input) {
+    if (input == null) {
+      return [];
+    }
+    return input
+      .toString()
+      .split(/[\n,]+/)
+      .map((entry) => entry.trim().toLowerCase())
+      .filter(Boolean)
+      .map((entry) => entry.replace(/^@+/, ''))
+      .filter(Boolean);
+  }
+
+  slugify(value) {
+    if (!value) {
+      return '';
+    }
+    return value
+      .toString()
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 40);
+  }
+
+  submitJoinRequest(formData) {
+    const profile = this.store.getProfile();
+    if (!profile || !profile.name) {
+      this.setFlash('error', 'Add your workspace identity before requesting access.');
+      this.render();
+      return;
+    }
+
+    const workspaceId = (formData.get('workspaceId') || this.joinWorkspaceId || '').toString();
+    const workspace = this.store.getWorkspace(workspaceId);
+    if (!workspace) {
+      this.setFlash('error', 'Select a workspace to join.');
+      this.render();
+      return;
+    }
+
+    if (this.isMember(workspace, profile.id)) {
+      this.setFlash('info', 'You are already a member of this workspace.');
+      this.selectedWorkspaceId = workspace.id;
+      this.updateHash(workspace.id);
+      this.render();
+      return;
+    }
+
+    const message = (formData.get('message') || '').toString().trim();
+    const now = Date.now();
+    const requesterId = profile.id || this.store.generateId('member');
+
+    if (workspace.settings.access === 'domain') {
+      if (!profile.email || !this.isDomainAllowed(workspace.settings.allowedDomains, profile.email)) {
+        this.setFlash('error', 'This workspace auto-approves specific domains. Update your email to match.');
+        this.render();
+        return;
+      }
+      const added = this.addMember(workspace, profile);
+      if (added) {
+        this.store.saveWorkspace(workspace);
+        this.selectedWorkspaceId = workspace.id;
+        this.updateHash(workspace.id);
+        this.setFlash('success', 'Joined automatically via approved domain.');
+      } else {
+        this.setFlash('info', 'You already have access to this workspace.');
+      }
+      this.joinFormState.message = '';
+      this.render();
+      return;
+    }
+
+    if (workspace.settings.access === 'invite') {
+      this.setFlash('info', 'This workspace requires an invite link. Paste a code below or contact an admin.');
+      this.render();
+      return;
+    }
+
+    const request = {
+      id: this.store.generateId('request'),
+      workspaceId,
+      workspaceName: workspace.name,
+      requester: {
+        id: requesterId,
+        name: profile.name,
+        email: profile.email,
+        message,
+        publicKey: this.store.generateId('pubkey')
+      },
+      timestamp: now,
+      status: 'pending',
+      approvals: [],
+      rejections: []
+    };
+
+    if (this.isDomainAllowed(workspace.settings.allowedDomains, profile.email)) {
+      const added = this.addMember(workspace, profile);
+      if (added) {
+        this.store.saveWorkspace(workspace);
+        this.selectedWorkspaceId = workspace.id;
+        this.updateHash(workspace.id);
+        this.setFlash('success', 'Joined automatically with domain approval.');
+        this.joinFormState.message = '';
+        this.render();
+        return;
+      }
+    }
+
+    workspace.pendingRequests = Array.isArray(workspace.pendingRequests) ? workspace.pendingRequests : [];
+    const existingIndex = workspace.pendingRequests.findIndex((pending) => pending.requester?.id === requesterId && pending.status === 'pending');
+    if (existingIndex >= 0) {
+      workspace.pendingRequests[existingIndex].timestamp = now;
+      workspace.pendingRequests[existingIndex].requester.message = message;
+    } else {
+      workspace.pendingRequests.push(request);
+    }
+
+    this.store.saveWorkspace(workspace);
+    this.joinFormState.message = '';
+    this.setFlash('success', 'Join request sent. Members will review shortly.');
+    this.render();
+  }
+
+  pendingRequestsForProfile(profileId) {
+    if (!profileId) {
+      return [];
+    }
+    const workspaces = this.store.listWorkspaces();
+    const results = [];
+    workspaces.forEach((workspace) => {
+      (workspace.pendingRequests || []).forEach((request) => {
+        if (request.requester && request.requester.id === profileId) {
+          results.push({ ...request, workspaceName: workspace.name });
+        }
+      });
+    });
+    return results;
+  }
+
+  describeAccess(settings = {}) {
+    switch (settings.access) {
+      case 'approval':
+        return 'Request to join';
+      case 'domain':
+        return 'Domain restricted';
+      case 'invite':
+      default:
+        return 'Invite only';
+    }
+  }
+
+  describeApproval(workspace) {
+    if (!workspace || !workspace.settings) {
+      return 'Invite only';
+    }
+
+    if (workspace.settings.access === 'approval') {
+      return `Needs ${this.describeApprovalOption(workspace.settings.approvalCount || '1')}`;
+    }
+
+    if (workspace.settings.access === 'domain') {
+      return 'Auto-approves allowed domains';
+    }
+
+    return 'Invite only';
+  }
+
+  describeApprovalOption(value) {
+    switch (value) {
+      case '2':
+        return '2 approvals';
+      case '3':
+        return '3 approvals';
+      case 'majority':
+        return 'Majority of members';
+      case 'all':
+        return 'All members';
+      case '1':
+      default:
+        return '1 approval';
+    }
+  }
+
+  requiredApprovals(workspace) {
+    if (!workspace || workspace.settings.access !== 'approval') {
+      return 0;
+    }
+    const members = Array.isArray(workspace.members) ? workspace.members.length : 0;
+    const setting = workspace.settings.approvalCount || '1';
+    if (setting === 'majority') {
+      return Math.max(1, Math.ceil(members / 2));
+    }
+    if (setting === 'all') {
+      return Math.max(1, members);
+    }
+    const parsed = parseInt(setting, 10);
+    return Number.isFinite(parsed) ? Math.max(1, parsed) : 1;
+  }
+
+  hasVoted(request, memberId) {
+    if (!request || !memberId) {
+      return false;
+    }
+    const approvals = Array.isArray(request.approvals) ? request.approvals : [];
+    const rejections = Array.isArray(request.rejections) ? request.rejections : [];
+    return approvals.some((vote) => vote.memberId === memberId) || rejections.some((vote) => vote.memberId === memberId);
+  }
+
+  getMemberVote(request, memberId) {
+    if (!request || !memberId) {
+      return 'have not voted';
+    }
+    if (Array.isArray(request.approvals) && request.approvals.some((vote) => vote.memberId === memberId)) {
+      return 'approved this request';
+    }
+    if (Array.isArray(request.rejections) && request.rejections.some((vote) => vote.memberId === memberId)) {
+      return 'rejected this request';
+    }
+    return 'have not voted';
+  }
+
+  recordApproval(workspaceId, requestId, approved) {
+    const workspace = this.store.getWorkspace(workspaceId);
+    const profile = this.store.getProfile();
+    if (!workspace || !requestId || !profile) {
+      return;
+    }
+
+    if (!this.isMember(workspace, profile.id)) {
+      this.setFlash('error', 'Join the workspace to vote on requests.');
+      this.render();
+      return;
+    }
+
+    if (workspace.settings.adminOnlyApprove && !this.isAdmin(workspace, profile.id)) {
+      this.setFlash('error', 'Only admins can approve requests in this workspace.');
+      this.render();
+      return;
+    }
+
+    const request = (workspace.pendingRequests || []).find((item) => item.id === requestId);
+    if (!request || request.status !== 'pending') {
+      this.setFlash('info', 'This request is no longer pending.');
+      this.render();
+      return;
+    }
+
+    if (this.hasVoted(request, profile.id)) {
+      this.setFlash('info', 'You have already voted on this request.');
+      this.render();
+      return;
+    }
+
+    const vote = {
+      memberId: profile.id,
+      memberName: profile.name,
+      timestamp: Date.now()
+    };
+
+    request.approvals = Array.isArray(request.approvals) ? request.approvals : [];
+    request.rejections = Array.isArray(request.rejections) ? request.rejections : [];
+
+    if (approved) {
+      request.approvals.push(vote);
+      const required = this.requiredApprovals(workspace);
+      if (required > 0 && request.approvals.length >= required) {
+        this.finalizeApproval(workspace, request);
+        return;
+      }
+      this.store.saveWorkspace(workspace);
+      this.setFlash('success', 'Approval recorded. Waiting for more votes.');
+      this.render();
+    } else {
+      request.rejections.push(vote);
+      request.status = 'rejected';
+      workspace.pendingRequests = workspace.pendingRequests.filter((item) => item.id !== request.id);
+      this.store.saveWorkspace(workspace);
+      this.setFlash('info', 'Request rejected.');
+      this.render();
+    }
+  }
+
+  finalizeApproval(workspace, request) {
+    request.status = 'approved';
+    workspace.pendingRequests = workspace.pendingRequests.filter((item) => item.id !== request.id);
+    const memberProfile = {
+      id: request.requester?.id || this.store.generateId('member'),
+      name: request.requester?.name,
+      email: request.requester?.email
+    };
+    this.addMember(workspace, memberProfile);
+    this.store.saveWorkspace(workspace);
+    this.setFlash('success', `${request.requester?.name || 'Member'} joined ${workspace.name}.`);
+    this.render();
+  }
+
+  addMember(workspace, profile, role = 'member') {
+    if (!workspace || !profile) {
+      return false;
+    }
+    workspace.members = Array.isArray(workspace.members) ? workspace.members : [];
+    if (workspace.members.some((member) => member.id === profile.id)) {
+      return false;
+    }
+    workspace.members.push({
+      id: profile.id || this.store.generateId('member'),
+      displayName: profile.name || profile.displayName || 'Member',
+      email: profile.email,
+      role,
+      joinedAt: Date.now()
+    });
+    return true;
+  }
+
+  promoteMember(workspaceId, memberId) {
+    const workspace = this.store.getWorkspace(workspaceId);
+    const profile = this.store.getProfile();
+    if (!workspace || !memberId || !profile || !this.isAdmin(workspace, profile.id)) {
+      return;
+    }
+
+    const member = (workspace.members || []).find((item) => item.id === memberId);
+    if (!member || member.role === 'admin') {
+      return;
+    }
+    member.role = 'admin';
+    this.store.saveWorkspace(workspace);
+    this.setFlash('success', `${member.displayName || 'Member'} is now an admin.`);
+    this.render();
+  }
+
+  removeMember(workspaceId, memberId) {
+    const workspace = this.store.getWorkspace(workspaceId);
+    const profile = this.store.getProfile();
+    if (!workspace || !memberId || !profile || !this.isAdmin(workspace, profile.id)) {
+      return;
+    }
+
+    const member = (workspace.members || []).find((item) => item.id === memberId);
+    if (!member) {
+      return;
+    }
+
+    if (member.role === 'admin') {
+      const adminCount = (workspace.members || []).filter((item) => item.role === 'admin').length;
+      if (adminCount <= 1) {
+        this.setFlash('error', 'At least one admin is required.');
+        this.render();
+        return;
+      }
+    }
+
+    workspace.members = workspace.members.filter((item) => item.id !== memberId);
+    this.store.saveWorkspace(workspace);
+    this.setFlash('info', `${member.displayName || 'Member'} was removed from ${workspace.name}.`);
+    this.render();
+  }
+
+  generateInvite(workspaceId) {
+    const workspace = this.store.getWorkspace(workspaceId);
+    const profile = this.store.getProfile();
+    if (!workspace || !profile || !this.isAdmin(workspace, profile.id)) {
+      return;
+    }
+
+    workspace.activeInvites = Array.isArray(workspace.activeInvites) ? workspace.activeInvites : [];
+    const invite = {
+      id: this.store.generateId('invite'),
+      code: `${workspace.id}-${Math.random().toString(36).slice(2, 8)}`.toLowerCase(),
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 1000 * 60 * 60 * 24 * 7,
+      creatorId: profile.id,
+      creatorName: profile.name
+    };
+
+    workspace.activeInvites.push(invite);
+    this.store.saveWorkspace(workspace);
+    this.setFlash('success', `Invite ${invite.code} generated.`);
+    this.render();
+  }
+
+  revokeInvite(workspaceId, inviteId) {
+    const workspace = this.store.getWorkspace(workspaceId);
+    const profile = this.store.getProfile();
+    if (!workspace || !profile || !this.isAdmin(workspace, profile.id)) {
+      return;
+    }
+
+    workspace.activeInvites = (workspace.activeInvites || []).filter((invite) => invite.id !== inviteId);
+    this.store.saveWorkspace(workspace);
+    this.setFlash('info', 'Invite revoked.');
+    this.render();
+  }
+
+  joinWithInviteCode() {
+    const input = this.container.querySelector('#workspaceJoinCode');
+    const profile = this.store.getProfile();
+    if (!input) {
+      return;
+    }
+    const code = input.value.trim();
+    if (!code) {
+      this.setFlash('error', 'Enter an invite code.');
+      this.render();
+      return;
+    }
+
+    if (!profile || !profile.name) {
+      this.setFlash('error', 'Set your workspace identity before using invite codes.');
+      this.render();
+      return;
+    }
+
+    const workspaces = this.store.listWorkspaces();
+    const now = Date.now();
+    let matched = null;
+    workspaces.forEach((workspace) => {
+      if (matched) {
+        return;
+      }
+      const invites = Array.isArray(workspace.activeInvites) ? workspace.activeInvites : [];
+      const invite = invites.find((item) => item.code === code && (!item.expiresAt || item.expiresAt > now));
+      if (invite) {
+        matched = { workspace, invite };
+      }
+    });
+
+    if (!matched) {
+      this.setFlash('error', 'Invite code not found or expired.');
+      this.render();
+      return;
+    }
+
+    const { workspace, invite } = matched;
+    const added = this.addMember(workspace, profile);
+    if (!added) {
+      this.setFlash('info', 'You already have access to this workspace.');
+      this.render();
+      return;
+    }
+
+    workspace.activeInvites = (workspace.activeInvites || []).filter((item) => item.id !== invite.id);
+    this.store.saveWorkspace(workspace);
+    input.value = '';
+    this.selectedWorkspaceId = workspace.id;
+    this.updateHash(workspace.id);
+    this.setFlash('success', `Joined ${workspace.name} via invite.`);
+    this.render();
+  }
+
+  copyWorkspaceUrl(workspaceId) {
+    const workspace = this.store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return;
+    }
+    const url = `${this.formatBaseUrl()}${workspace.id}`;
+    if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      navigator.clipboard.writeText(url).then(() => {
+        this.setFlash('success', 'Workspace URL copied to clipboard.');
+        this.render();
+      }).catch(() => {
+        this.setFlash('error', 'Unable to copy URL.');
+        this.render();
+      });
+    } else {
+      try {
+        const temp = document.createElement('input');
+        temp.value = url;
+        document.body.appendChild(temp);
+        temp.select();
+        document.execCommand('copy');
+        document.body.removeChild(temp);
+        this.setFlash('success', 'Workspace URL copied to clipboard.');
+      } catch (error) {
+        this.setFlash('error', 'Unable to copy URL.');
+      }
+      this.render();
+    }
+  }
+
+  saveWorkspaceSettings(workspaceId, formData) {
+    const workspace = this.store.getWorkspace(workspaceId);
+    const profile = this.store.getProfile();
+    if (!workspace || !profile || !this.isAdmin(workspace, profile.id)) {
+      return;
+    }
+
+    const name = (formData.get('name') || '').toString().trim();
+    const description = (formData.get('description') || '').toString().trim();
+    const access = (formData.get('access') || 'invite').toString();
+    const approvalCount = (formData.get('approvalCount') || '1').toString();
+    const adminOnly = formData.get('adminOnly') != null;
+    const autoReject = formData.get('autoReject') != null;
+    const allowedDomains = this.parseAllowedDomains(formData.get('allowedDomains'));
+
+    workspace.name = name || workspace.name;
+    workspace.description = description;
+    workspace.settings.access = access;
+    workspace.settings.approvalCount = approvalCount;
+    workspace.settings.adminOnlyApprove = adminOnly;
+    workspace.settings.autoExpireHours = access === 'approval' && autoReject ? 48 : 0;
+    workspace.settings.allowedDomains = allowedDomains;
+
+    this.store.saveWorkspace(workspace);
+    this.setFlash('success', 'Workspace settings updated.');
+    this.render();
+  }
+
+  cleanExpiredInvites(workspace) {
+    if (!workspace) {
+      return;
+    }
+    const now = Date.now();
+    const invites = Array.isArray(workspace.activeInvites) ? workspace.activeInvites : [];
+    const filtered = invites.filter((invite) => !invite.expiresAt || invite.expiresAt > now);
+    if (filtered.length !== invites.length) {
+      workspace.activeInvites = filtered;
+      this.store.saveWorkspace(workspace);
+    }
+  }
+
+  selectWorkspace(workspaceId) {
+    if (!workspaceId) {
+      return;
+    }
+    const workspace = this.store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return;
+    }
+    this.selectedWorkspaceId = workspaceId;
+    this.updateHash(workspaceId);
+    this.render();
+  }
+
+  isMember(workspace, memberId) {
+    if (!workspace || !memberId) {
+      return false;
+    }
+    return Array.isArray(workspace.members) && workspace.members.some((member) => member.id === memberId);
+  }
+
+  isAdmin(workspace, memberId) {
+    if (!workspace || !memberId) {
+      return false;
+    }
+    return Array.isArray(workspace.members) && workspace.members.some((member) => member.id === memberId && member.role === 'admin');
+  }
+
+  isDomainAllowed(allowedDomains, email) {
+    if (!email) {
+      return false;
+    }
+    const domain = email.split('@')[1];
+    if (!domain) {
+      return false;
+    }
+    const domains = Array.isArray(allowedDomains) ? allowedDomains : this.parseAllowedDomains(allowedDomains || '');
+    return domains.some((allowed) => domain.toLowerCase() === allowed.toLowerCase());
+  }
+
+  formatRelativeTime(value) {
+    const timestamp = Number(value);
+    if (!Number.isFinite(timestamp)) {
+      return 'just now';
+    }
+    const diff = Date.now() - timestamp;
+    const abs = Math.abs(diff);
+    const direction = diff >= 0 ? 'ago' : 'from now';
+    const minutes = Math.round(abs / 60000);
+    const hours = Math.round(abs / 3600000);
+    const days = Math.round(abs / 86400000);
+
+    if (abs < 60000) {
+      return 'just now';
+    }
+    if (abs < 3600000) {
+      return `${minutes} min ${direction}`;
+    }
+    if (abs < 86400000) {
+      return `${hours} hr ${direction}`;
+    }
+    if (days < 7) {
+      return `${days} day${days === 1 ? '' : 's'} ${direction}`;
+    }
+    return new Date(timestamp).toLocaleDateString();
+  }
 
 class NetworkStatusBar {
   constructor(element) {
@@ -4126,6 +5594,7 @@ Current Key: ${CryptoManager.getCurrentKey() ? 'Loaded ✓' : 'Not set ✗'}</pr
 
     // Initialize app
     window.App = new SecureChat();
+    window.Workspaces = new WorkspaceHub(DOM.workspaceHub);
 
     // Service Worker (if you have one)
     if ('serviceWorker' in navigator) {
