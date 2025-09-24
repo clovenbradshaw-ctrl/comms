@@ -313,6 +313,52 @@ class SecureChat {
         }
       }
 
+      rememberInviteDetails(roomId, saltBase64) {
+        if (!roomId || !saltBase64) {
+          return;
+        }
+
+        const key = `secure-chat:invite:${roomId}`;
+
+        try {
+          sessionStorage.setItem(key, saltBase64);
+          return;
+        } catch (error) {
+          // Session storage might be unavailable; fall back to local storage
+        }
+
+        try {
+          localStorage.setItem(key, saltBase64);
+        } catch (error) {
+          console.warn('Unable to persist invite details for reuse.', error);
+        }
+      }
+
+      loadStoredInviteSalt(roomId) {
+        if (!roomId) {
+          return '';
+        }
+
+        const key = `secure-chat:invite:${roomId}`;
+        let stored = '';
+
+        try {
+          stored = sessionStorage.getItem(key) || '';
+        } catch (error) {
+          // Ignore session storage access issues and fall back to local storage
+        }
+
+        if (!stored) {
+          try {
+            stored = localStorage.getItem(key) || '';
+          } catch (error) {
+            stored = '';
+          }
+        }
+
+        return stored.trim();
+      }
+
       isValidEmail(email) {
         if (!email) {
           return true;
@@ -388,34 +434,97 @@ Password: [share securely via a different channel]
         this.updateSimpleShareStatus('Share unsupported. Link copied to clipboard.', false);
       }
 
+      getInviteParamsFromUrl() {
+        if (typeof window === 'undefined') {
+          return { room: null, salt: null };
+        }
+
+        const sources = [];
+        if (window.location.search) {
+          sources.push(new URLSearchParams(window.location.search));
+        }
+
+        const hash = window.location.hash;
+        if (hash && hash.length > 1 && hash.includes('=')) {
+          const normalizedHash = hash.startsWith('#') ? hash.slice(1) : hash;
+          sources.push(new URLSearchParams(normalizedHash));
+        }
+
+        let room = null;
+        let salt = null;
+
+        for (const params of sources) {
+          if (!room) {
+            const value = params.get('room');
+            if (value) {
+              room = value;
+            }
+          }
+
+          if (!salt) {
+            const value = params.get('salt');
+            if (value) {
+              salt = value;
+            }
+          }
+
+          if (room && salt) {
+            break;
+          }
+        }
+
+        return { room, salt };
+      }
+
       // Check URL parameters for shared link
       checkForSharedLink() {
-        const params = new URLSearchParams(window.location.search);
-        const room = params.get('room');
-        const saltParam = params.get('salt');
+        const { room, salt } = this.getInviteParamsFromUrl();
+        let inviteDetected = false;
 
         if (room) {
           const joinCode = DOM.joinCode;
           if (joinCode) {
             joinCode.value = room;
           }
+          inviteDetected = true;
         }
 
-        if (saltParam) {
-          const saltBytes = this.base64ToBytes(saltParam);
-          if (saltBytes) {
-            this.pendingRoomSalt = saltBytes;
-            this.roomSaltBase64 = this.bytesToBase64(saltBytes);
-            const joinSalt = DOM.joinSalt;
-            if (joinSalt) {
-              joinSalt.value = this.roomSaltBase64;
+        let saltBytes = null;
+        if (typeof salt === 'string' && salt.trim()) {
+          saltBytes = this.base64ToBytes(salt);
+        }
+
+        if (!(saltBytes instanceof Uint8Array) && room) {
+          const storedSalt = this.loadStoredInviteSalt(room);
+          if (storedSalt) {
+            const decoded = this.base64ToBytes(storedSalt);
+            if (decoded instanceof Uint8Array) {
+              saltBytes = decoded;
             }
           }
         }
 
-        if (room || saltParam) {
+        if (saltBytes instanceof Uint8Array) {
+          const joinSalt = DOM.joinSalt;
+          const saltBase64 = this.bytesToBase64(saltBytes);
+          this.pendingRoomSalt = saltBytes;
+          this.roomSaltBase64 = saltBase64;
+          if (joinSalt) {
+            joinSalt.value = saltBase64;
+          }
+          if (room) {
+            this.rememberInviteDetails(room, saltBase64);
+          }
+          inviteDetected = true;
+        } else if (salt && !saltBytes) {
+          console.warn('Invite link contained an invalid room salt. Waiting for manual input or a refreshed link.');
+        }
+
+        if (inviteDetected) {
           this.showJoin();
-          window.history.replaceState({}, document.title, window.location.pathname);
+          if (window.location.search || (window.location.hash && window.location.hash.includes('='))) {
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }
         }
       }
 
@@ -841,7 +950,9 @@ Password: [share securely via a different channel]
         if (typeof input !== 'string' || !input.trim()) {
           return null;
         }
-        let normalized = input.trim().replace(/-/g, '+').replace(/_/g, '/');
+        let normalized = input.trim();
+        normalized = normalized.replace(/\s+/g, '');
+        normalized = normalized.replace(/-/g, '+').replace(/_/g, '/');
         while (normalized.length % 4 !== 0) {
           normalized += '=';
         }
@@ -1238,6 +1349,19 @@ Password: [share securely via a different channel]
           saltBytes = this.pendingRoomSalt;
         }
 
+        if (!(saltBytes instanceof Uint8Array) && roomId) {
+          const storedSalt = this.loadStoredInviteSalt(roomId);
+          if (storedSalt) {
+            const decoded = this.base64ToBytes(storedSalt);
+            if (decoded instanceof Uint8Array) {
+              saltBytes = decoded;
+              if (saltInput) {
+                saltInput.value = this.bytesToBase64(decoded);
+              }
+            }
+          }
+        }
+
         if (!(saltBytes instanceof Uint8Array)) {
           alert('Room salt is required. Open the invite link or paste the salt shared with you.');
           return;
@@ -1249,6 +1373,7 @@ Password: [share securely via a different channel]
         CryptoManager.setRoomSalt(saltBytes);
         this.roomSalt = CryptoManager.getRoomSalt();
         this.roomSaltBase64 = this.bytesToBase64(this.roomSalt);
+        this.rememberInviteDetails(roomId, this.roomSaltBase64);
 
         try {
           await CryptoManager.loadStaticKeyFromPassword(password);
