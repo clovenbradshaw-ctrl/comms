@@ -8,6 +8,10 @@ const DOM = {
   inviteSection: document.getElementById('inviteSection'),
   joinStatus: document.getElementById('joinStatus'),
   joinStatusDetail: document.getElementById('joinStatusDetail'),
+  joinLinkForm: document.getElementById('joinLinkForm'),
+  joinLinkInput: document.getElementById('joinLinkInput'),
+  joinLinkBtn: document.getElementById('joinLinkBtn'),
+  joinManualFeedback: document.getElementById('joinManualError'),
   waitingBanner: document.getElementById('waitingBanner'),
   chatShareLink: document.getElementById('chatShareLink'),
   waitingMessage: document.getElementById('waitingMessage'),
@@ -48,7 +52,13 @@ const DOM = {
   identityHint: document.getElementById('identityHint'),
   identityUseNew: document.getElementById('identityUseNew'),
   identityError: document.getElementById('identityError'),
-  identitySubmitBtn: document.getElementById('identitySubmitBtn')
+  identitySubmitBtn: document.getElementById('identitySubmitBtn'),
+  welcomeHostBtn: document.getElementById('welcomeHostBtn'),
+  welcomeJoinForm: document.getElementById('welcomeJoinForm'),
+  welcomeJoinInput: document.getElementById('welcomeJoinInput'),
+  welcomeJoinBtn: document.getElementById('welcomeJoinBtn'),
+  welcomeJoinFeedback: document.getElementById('welcomeJoinFeedback'),
+  welcomeJoinHelp: document.getElementById('welcomeJoinHelp')
 };
 
 const DEFAULT_FEATURE_FLAGS = {
@@ -634,6 +644,34 @@ class SecureChat {
 
         if (DOM.copyInviteBtn) {
           DOM.copyInviteBtn.addEventListener('click', () => this.copyShareLink('inviteLink'));
+        }
+
+        if (DOM.welcomeHostBtn) {
+          DOM.welcomeHostBtn.addEventListener('click', () => this.showHost());
+        }
+
+        if (DOM.welcomeJoinHelp) {
+          DOM.welcomeJoinHelp.addEventListener('click', () => this.showJoin());
+        }
+
+        if (DOM.welcomeJoinForm) {
+          DOM.welcomeJoinForm.addEventListener('submit', (event) => {
+            event.preventDefault();
+            const value = DOM.welcomeJoinInput?.value || '';
+            this.handleManualInviteEntry(value, { source: 'welcome' }).catch((error) => {
+              console.warn('Failed to process welcome join entry.', error);
+            });
+          });
+        }
+
+        if (DOM.joinLinkForm) {
+          DOM.joinLinkForm.addEventListener('submit', (event) => {
+            event.preventDefault();
+            const value = DOM.joinLinkInput?.value || '';
+            this.handleManualInviteEntry(value, { source: 'joinScreen' }).catch((error) => {
+              console.warn('Failed to process join entry.', error);
+            });
+          });
         }
       }
 
@@ -1225,11 +1263,11 @@ class SecureChat {
       focusDefaultForScreen(screenId) {
         let focusTarget = null;
         if (screenId === 'welcomeScreen') {
-          focusTarget = DOM.welcomeScreen?.querySelector('.action-buttons button');
+          focusTarget = DOM.welcomeHostBtn || DOM.welcomeScreen?.querySelector('button');
         } else if (screenId === 'hostScreen') {
           focusTarget = DOM.copyInviteBtn || DOM.inviteLink;
         } else if (screenId === 'joinScreen') {
-          focusTarget = DOM.joinStatus;
+          focusTarget = DOM.joinLinkInput || DOM.joinStatus;
         } else if (screenId === 'chatScreen') {
           focusTarget = DOM.messageInput;
         }
@@ -1497,6 +1535,228 @@ This invite can be used only once. Share the link privately.`;
         }
       }
 
+      async handleManualInviteEntry(rawValue, { source = 'joinScreen' } = {}) {
+        const trimmed = typeof rawValue === 'string' ? rawValue.trim() : '';
+        if (!trimmed) {
+          this.updateManualJoinFeedback(source, 'Paste the invite link or code to continue.', true);
+          return;
+        }
+
+        this.setManualJoinBusy(source, true);
+        this.updateManualJoinFeedback(source, 'Checking invite…', false);
+
+        let invite = null;
+        try {
+          invite = await this.parseInviteString(trimmed);
+        } catch (error) {
+          console.warn('Unable to parse invite input.', error);
+        }
+
+        if (!invite) {
+          this.updateManualJoinFeedback(source, 'We couldn’t read that invite. Make sure you copied the full link.', true);
+          this.setManualJoinBusy(source, false);
+          return;
+        }
+
+        const detailMessage = invite.expiresAt
+          ? 'Verifying token and expiration...'
+          : 'Verifying one-time token...';
+
+        if (DOM.joinLinkInput) {
+          DOM.joinLinkInput.value = trimmed;
+          DOM.joinLinkInput.setAttribute('data-preserve', 'true');
+        }
+
+        this.showJoin('Claiming your secure seat...', detailMessage);
+        this.updateManualJoinFeedback('joinScreen', 'Checking invite…', false);
+        this.setManualJoinBusy('joinScreen', true);
+
+        try {
+          await this.startJoinFromInvite(invite);
+          this.updateManualJoinFeedback('joinScreen', '');
+          this.updateManualJoinFeedback(source, '');
+          if (source === 'welcome' && DOM.welcomeJoinInput) {
+            DOM.welcomeJoinInput.value = '';
+          }
+          if (source === 'joinScreen' && DOM.joinLinkInput) {
+            DOM.joinLinkInput.value = '';
+          }
+        } catch (error) {
+          console.error('Manual invite join failed.', error);
+          const message = error?.message || 'Unable to use this invite link.';
+          this.showJoin('Invite unavailable', message);
+          this.updateManualJoinFeedback('joinScreen', message, true);
+          if (source === 'welcome') {
+            this.updateManualJoinFeedback('welcome', '');
+          }
+        } finally {
+          this.setManualJoinBusy(source, false);
+          this.setManualJoinBusy('joinScreen', false);
+          if (DOM.joinLinkInput) {
+            DOM.joinLinkInput.removeAttribute('data-preserve');
+          }
+        }
+      }
+
+      setManualJoinBusy(source, isBusy) {
+        const targetButton = source === 'welcome' ? DOM.welcomeJoinBtn : DOM.joinLinkBtn;
+        const targetInput = source === 'welcome' ? DOM.welcomeJoinInput : DOM.joinLinkInput;
+        const busy = Boolean(isBusy);
+
+        if (targetButton) {
+          targetButton.disabled = busy;
+          targetButton.setAttribute('aria-disabled', busy ? 'true' : 'false');
+          targetButton.classList.toggle('loading', busy);
+        }
+
+        if (targetInput) {
+          targetInput.setAttribute('aria-busy', busy ? 'true' : 'false');
+        }
+      }
+
+      updateManualJoinFeedback(source, message, isError = false) {
+        let target = null;
+        if (source === 'welcome') {
+          target = DOM.welcomeJoinFeedback;
+        } else {
+          target = DOM.joinManualFeedback;
+        }
+
+        if (!target) {
+          return;
+        }
+
+        target.textContent = message || '';
+        if (isError) {
+          target.classList.add('error');
+        } else {
+          target.classList.remove('error');
+        }
+      }
+
+      async parseInviteString(rawValue) {
+        if (typeof rawValue !== 'string') {
+          return null;
+        }
+
+        let value = rawValue.trim();
+        if (!value) {
+          return null;
+        }
+
+        const attemptFromHash = (hash) => {
+          if (typeof hash !== 'string' || !hash.trim()) {
+            return null;
+          }
+
+          let normalized = hash.trim();
+          if (!normalized.startsWith('#')) {
+            normalized = `#${normalized.replace(/^#+/, '')}`;
+          }
+
+          if (normalized.startsWith('#/j/')) {
+            const encoded = decodeURIComponent(normalized.slice(4));
+            return SecureInvite.decodePayload(encoded);
+          }
+
+          if (normalized.startsWith('#/join/')) {
+            const parts = normalized.replace(/^#\/+/, '').split('/');
+            if (parts.length >= 4) {
+              const [ , roomId, seatId, secretKey, expiresAt, signature ] = parts;
+              return {
+                r: roomId,
+                s: seatId,
+                k: secretKey,
+                e: expiresAt,
+                sig: signature
+              };
+            }
+          }
+
+          return null;
+        };
+
+        let payload = attemptFromHash(value);
+
+        if (!payload) {
+          try {
+            const url = new URL(value);
+            payload = attemptFromHash(url.hash);
+            if (!payload) {
+              const inviteParam = url.searchParams.get('invite');
+              if (inviteParam) {
+                payload = SecureInvite.decodePayload(inviteParam);
+              }
+            }
+          } catch (error) {
+            if (!value.startsWith('http') && value.includes('#/')) {
+              const hashIndex = value.indexOf('#/');
+              const hashPart = value.slice(hashIndex);
+              payload = attemptFromHash(hashPart);
+            }
+          }
+        }
+
+        if (!payload && value.includes('#/')) {
+          payload = attemptFromHash(value.slice(value.indexOf('#/')));
+        }
+
+        if (!payload) {
+          payload = SecureInvite.decodePayload(value);
+        }
+
+        if (!payload && value.includes('.')) {
+          const parts = value.split('.');
+          if (parts.length >= 3) {
+            payload = {
+              r: parts[0],
+              s: parts[1],
+              k: parts.slice(2).join('.')
+            };
+          }
+        }
+
+        const invite = this.normalizeInvitePayload(payload);
+        if (!invite) {
+          return null;
+        }
+
+        if (!invite.signature) {
+          try {
+            invite.signature = await SecureInvite.signInvite(
+              invite.roomId,
+              invite.seatId,
+              invite.secretKey,
+              invite.expiresAt
+            );
+          } catch (error) {
+            console.warn('Unable to compute invite signature from manual entry.', error);
+          }
+        }
+
+        return invite;
+      }
+
+      normalizeInvitePayload(payload) {
+        if (!payload || typeof payload !== 'object') {
+          return null;
+        }
+
+        const invite = {
+          roomId: payload.roomId || payload.r || '',
+          seatId: payload.seatId || payload.s || '',
+          secretKey: payload.secretKey || payload.k || '',
+          expiresAt: payload.expiresAt || payload.e,
+          signature: payload.signature || payload.sig
+        };
+
+        if (!invite.roomId || !invite.seatId || !invite.secretKey) {
+          return null;
+        }
+
+        return invite;
+      }
+
       async createInvitePayload(roomId, seat) {
         if (!roomId || !seat?.seatId || !seat?.secretKey) {
           return null;
@@ -1747,6 +2007,11 @@ This invite can be used only once. Share the link privately.`;
       showWelcome() {
         this.showScreen('welcomeScreen');
         this.renderRoomHistory(projection.roomList());
+        this.updateManualJoinFeedback('welcome', '');
+        this.setManualJoinBusy('welcome', false);
+        if (DOM.welcomeJoinInput) {
+          DOM.welcomeJoinInput.value = '';
+        }
       }
 
       showHost() {
@@ -1788,6 +2053,11 @@ This invite can be used only once. Share the link privately.`;
         }
         if (DOM.joinStatusDetail) {
           DOM.joinStatusDetail.textContent = detailMessage;
+        }
+        this.updateManualJoinFeedback('joinScreen', '');
+        this.setManualJoinBusy('joinScreen', false);
+        if (DOM.joinLinkInput && !DOM.joinLinkInput.hasAttribute('data-preserve')) {
+          DOM.joinLinkInput.value = '';
         }
         this.showScreen('joinScreen');
       }

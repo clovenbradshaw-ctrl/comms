@@ -59,15 +59,52 @@
             </div>
           </div>
 
-          <div class="action-buttons">
-            <button class="btn btn-primary" onclick="App.showHost()">
-              <span>🏠</span>
-              <span>Create Room</span>
-            </button>
-            <button class="btn btn-secondary" onclick="App.showJoin()">
-              <span>🔗</span>
-              <span>Join Room</span>
-            </button>
+          <div class="welcome-actions">
+            <div class="welcome-action host-action">
+              <h2>Start a room</h2>
+              <p>Create a private space and invite people you trust. No accounts, no history.</p>
+              <div class="setup-steps compact">
+                <div class="setup-step">
+                  <div class="step-number">1</div>
+                  <div>
+                    <h3>Generate your room</h3>
+                    <p>We’ll create a fresh room ID every time you start.</p>
+                  </div>
+                </div>
+                <div class="setup-step">
+                  <div class="step-number">2</div>
+                  <div>
+                    <h3>Share the invite</h3>
+                    <p>Send the one-time link or read the code aloud.</p>
+                  </div>
+                </div>
+                <div class="setup-step">
+                  <div class="step-number">3</div>
+                  <div>
+                    <h3>Start chatting</h3>
+                    <p>Your conversation stays end-to-end encrypted.</p>
+                  </div>
+                </div>
+              </div>
+              <button id="welcomeHostBtn" class="btn btn-primary">
+                <span>🏠</span>
+                <span>Start a room</span>
+              </button>
+            </div>
+            <div class="welcome-action join-action">
+              <h2>Join a room</h2>
+              <p>Paste the link or code your host sent you to hop in.</p>
+              <form id="welcomeJoinForm" class="inline-join-form" novalidate>
+                <label class="sr-only" for="welcomeJoinInput">Invite link or code</label>
+                <input id="welcomeJoinInput" class="input-field" type="text" placeholder="Paste invite link or code" autocomplete="off">
+                <button id="welcomeJoinBtn" class="btn btn-secondary" type="submit">
+                  <span>🔗</span>
+                  <span>Join</span>
+                </button>
+              </form>
+              <div id="welcomeJoinFeedback" class="input-feedback" aria-live="polite"></div>
+              <button id="welcomeJoinHelp" class="ghost-link" type="button">Need help? View join instructions</button>
+            </div>
           </div>
 
           <!-- Room History -->
@@ -90,7 +127,24 @@
             Loading...
           </div>
           
-          <button class="btn btn-primary" style="width: 100%;" onclick="App.startHost()">
+          <div class="setup-steps">
+            <div class="setup-step">
+              <div class="step-number">1</div>
+              <div>
+                <h3>Confirm the room code</h3>
+                <p>Share it verbally if you’re already on a call together.</p>
+              </div>
+            </div>
+            <div class="setup-step">
+              <div class="step-number">2</div>
+              <div>
+                <h3>Send a one-time link</h3>
+                <p>Generate a private link that expires after it’s used.</p>
+              </div>
+            </div>
+          </div>
+
+          <button class="btn btn-primary full-width" onclick="App.startHost()">
             Generate Secure Invite
           </button>
 
@@ -138,6 +192,19 @@
             <div class="spinner" id="joinSpinner"></div>
             <p id="joinStatus" tabindex="-1">Claiming your secure seat...</p>
             <p class="small" id="joinStatusDetail">Verifying one-time token...</p>
+          </div>
+
+          <div class="manual-join-card">
+            <h3>Join with a link or code</h3>
+            <form id="joinLinkForm" class="manual-join-form" novalidate>
+              <label class="input-label" for="joinLinkInput">Invite link or code</label>
+              <div class="input-row">
+                <input type="text" id="joinLinkInput" class="input-field" placeholder="Paste invite link or code" autocomplete="off">
+                <button id="joinLinkBtn" class="btn btn-primary" type="submit">Join Room</button>
+              </div>
+            </form>
+            <div id="joinManualError" class="input-feedback" aria-live="polite"></div>
+            <p class="small muted">Tip: Links usually look like <code>https://your-chat.app#/j/abc123</code>. They can only be used once.</p>
           </div>
           
           <button class="btn btn-secondary" style="width: 100%; margin-top: 1rem;" onclick="App.showWelcome()">
