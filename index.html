@@ -96,26 +96,59 @@
 
           <div id="shareSection" class="share-section" style="display: none;">
             <div class="invite-section" id="inviteSection">
-              <h3>🎟️ Secure One-Time Invite</h3>
-              <p>This link works only once and expires in 15 minutes.</p>
+              <div class="invite-generator">
+                <div class="invite-header">
+                  <h3>Invite Someone to This Room</h3>
+                  <p class="invite-note">Each invite works once and expires in 15 minutes.</p>
+                </div>
 
-              <div class="invite-link-container">
-                <input id="inviteLink" class="invite-input" readonly value="Generating secure link..." aria-live="polite">
-                <button id="copyInviteBtn" class="btn btn-primary">📋 Copy Secure Link</button>
-              </div>
+                <div class="room-seats-visual">
+                  <div class="seats-grid" id="inviteSeatsGrid"></div>
+                  <p class="seats-info" id="inviteSeatsInfo">Seats loading…</p>
+                </div>
 
-              <div class="security-info">
-                ✅ No passwords needed<br>
-                ✅ Single-use only<br>
-                ✅ Auto-expires<br>
-                ✅ Cryptographically secure
-              </div>
+                <div class="invite-actions">
+                  <button id="generateInviteBtn" class="btn btn-primary">
+                    <span aria-hidden="true">🎟️</span>
+                    <span>Generate Invite Link</span>
+                  </button>
+                  <p class="invite-note subtle">Need a fresh link? Generate a new one anytime.</p>
+                </div>
 
-              <div class="simple-setup">
-                <label class="input-label" for="simpleEmail">Simple setup (optional)</label>
-                <input type="email" id="simpleEmail" class="input-field" placeholder="Invite email (leave blank to use device share)">
-                <button class="btn btn-secondary" style="width: 100%;" onclick="App.simpleShareInvite()">✨ Simple Setup: Share Invite</button>
-                <div id="simpleShareStatus" class="simple-status"></div>
+                <div class="active-invite" id="activeInvite" hidden>
+                  <div class="invite-status">
+                    <span class="status-dot pulse" id="inviteStatusDot" aria-hidden="true"></span>
+                    <span id="inviteCountdown">No active invite</span>
+                  </div>
+
+                  <div class="invite-link-box">
+                    <input id="inviteLink" class="invite-input" readonly value="Generating secure link..." aria-live="polite">
+                    <button id="copyInviteBtn" class="btn btn-secondary" disabled>📋 Copy Secure Link</button>
+                  </div>
+
+                  <div class="invite-options">
+                    <button class="btn btn-ghost" id="shareInviteBtn" disabled>
+                      📱 Share Options
+                    </button>
+                    <button class="btn btn-ghost" id="cancelInviteBtn" disabled>
+                      ❌ Cancel Invite
+                    </button>
+                  </div>
+                </div>
+
+                <div class="security-info">
+                  ✅ No passwords needed<br>
+                  ✅ Single-use only<br>
+                  ✅ Auto-expires<br>
+                  ✅ Cryptographically secure
+                </div>
+
+                <div class="simple-setup">
+                  <label class="input-label" for="simpleEmail">Simple setup (optional)</label>
+                  <input type="email" id="simpleEmail" class="input-field" placeholder="Invite email (leave blank to use device share)">
+                  <button class="btn btn-secondary" style="width: 100%;" onclick="App.simpleShareInvite()">✨ Simple Setup: Share Invite</button>
+                  <div id="simpleShareStatus" class="simple-status"></div>
+                </div>
               </div>
             </div>
           </div>

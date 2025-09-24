@@ -5,6 +5,14 @@ const DOM = {
   simpleShareStatus: document.getElementById('simpleShareStatus'),
   inviteLink: document.getElementById('inviteLink'),
   copyInviteBtn: document.getElementById('copyInviteBtn'),
+  activeInvite: document.getElementById('activeInvite'),
+  inviteCountdown: document.getElementById('inviteCountdown'),
+  inviteStatusDot: document.getElementById('inviteStatusDot'),
+  shareInviteBtn: document.getElementById('shareInviteBtn'),
+  cancelInviteBtn: document.getElementById('cancelInviteBtn'),
+  generateInviteBtn: document.getElementById('generateInviteBtn'),
+  inviteSeatsGrid: document.getElementById('inviteSeatsGrid'),
+  inviteSeatsInfo: document.getElementById('inviteSeatsInfo'),
   inviteSection: document.getElementById('inviteSection'),
   joinStatus: document.getElementById('joinStatus'),
   joinStatusDetail: document.getElementById('joinStatusDetail'),
@@ -508,6 +516,9 @@ class SecureChat {
         this.isHost = false;
         this.currentShareLink = '';
         this.currentInvite = null;
+        this.invitePanelUnlocked = false;
+        this.inviteCountdownTimer = null;
+        this.inviteSeatCapacity = 4;
         this.seats = { host: null, guest: null };
         this.localUserId = generateId('user-');
         this.remoteUserId = null;
@@ -609,6 +620,7 @@ class SecureChat {
         this.initDevRoutes();
         this.applyFeatureFlags();
         this.initIdentityFlow();
+        this.updateInviteVisuals();
       }
 
       initEventListeners() {
@@ -634,6 +646,18 @@ class SecureChat {
 
         if (DOM.copyInviteBtn) {
           DOM.copyInviteBtn.addEventListener('click', () => this.copyShareLink('inviteLink'));
+        }
+
+        if (DOM.generateInviteBtn) {
+          DOM.generateInviteBtn.addEventListener('click', () => this.handleGenerateInviteClick());
+        }
+
+        if (DOM.shareInviteBtn) {
+          DOM.shareInviteBtn.addEventListener('click', () => this.showInviteShareOptions());
+        }
+
+        if (DOM.cancelInviteBtn) {
+          DOM.cancelInviteBtn.addEventListener('click', () => this.cancelActiveInvite());
         }
       }
 
@@ -1015,6 +1039,7 @@ class SecureChat {
           const identity = await this.identityManager.createIdentity(displayName, password);
           this.localIdentity = identity;
           this.roomMembers?.upsertMember(identity, { isHost: this.isHost, online: true });
+          this.updateInviteVisuals();
           this.hideIdentityModal(identity);
           this.scheduleIdentityAnnouncement();
         } catch (error) {
@@ -1047,6 +1072,7 @@ class SecureChat {
           }
           this.localIdentity = identity;
           this.roomMembers?.upsertMember(identity, { isHost: this.isHost, online: true });
+          this.updateInviteVisuals();
           this.hideIdentityModal(identity);
           this.scheduleIdentityAnnouncement();
         } catch (error) {
@@ -1081,6 +1107,7 @@ class SecureChat {
             if (identity) {
               this.localIdentity = identity;
               this.roomMembers?.upsertMember(identity, { isHost: this.isHost, online: true });
+              this.updateInviteVisuals();
               this.scheduleIdentityAnnouncement();
               return identity;
             }
@@ -1093,6 +1120,7 @@ class SecureChat {
         if (created) {
           this.localIdentity = created;
           this.roomMembers?.upsertMember(created, { isHost: this.isHost, online: true });
+          this.updateInviteVisuals();
           this.scheduleIdentityAnnouncement();
           return created;
         }
@@ -1171,6 +1199,7 @@ class SecureChat {
           verified: identity.verified,
           lastSeen: Date.now()
         });
+        this.updateInviteVisuals();
       }
 
       normalizeAvatar(avatar) {
@@ -1210,6 +1239,7 @@ class SecureChat {
         this.identityManager = null;
         this.pendingStoredIdentity = null;
         this.clearIdentityAnnouncement();
+        this.updateInviteVisuals();
         if (this.roomMembers) {
           this.roomMembers.members.clear();
           this.roomMembers.render();
@@ -1220,6 +1250,7 @@ class SecureChat {
         if (this.remoteIdentity?.id) {
           this.roomMembers?.markOffline(this.remoteIdentity.id);
         }
+        this.updateInviteVisuals();
       }
 
       focusDefaultForScreen(screenId) {
@@ -1540,12 +1571,59 @@ This invite can be used only once. Share the link privately.`;
       updateInviteLink(url) {
         const inviteInput = DOM.inviteLink;
         const shareSection = DOM.shareSection;
+        const activeInvite = DOM.activeInvite;
+        const copyBtn = DOM.copyInviteBtn;
+        const shareBtn = DOM.shareInviteBtn;
+        const cancelBtn = DOM.cancelInviteBtn;
+        const generateBtn = DOM.generateInviteBtn;
 
         if (shareSection) {
-          shareSection.style.display = url ? 'block' : 'none';
+          if (url) {
+            shareSection.style.display = 'block';
+            this.invitePanelUnlocked = true;
+          } else if (!this.invitePanelUnlocked) {
+            shareSection.style.display = 'none';
+          }
+        }
+
+        if (activeInvite) {
+          if (url) {
+            activeInvite.hidden = false;
+            activeInvite.classList.remove('expired');
+          } else if (this.invitePanelUnlocked) {
+            activeInvite.hidden = true;
+            activeInvite.classList.remove('expired');
+          }
+        }
+
+        if (copyBtn) {
+          copyBtn.disabled = !url;
+        }
+
+        if (shareBtn) {
+          shareBtn.disabled = !url;
+        }
+
+        if (cancelBtn) {
+          cancelBtn.disabled = !url;
+        }
+
+        if (generateBtn) {
+          const labelSpan = generateBtn.querySelector('span:last-child');
+          if (labelSpan) {
+            labelSpan.textContent = url ? 'Generate New Invite Link' : 'Generate Invite Link';
+          } else {
+            generateBtn.textContent = url ? '🎟️ Generate New Invite Link' : '🎟️ Generate Invite Link';
+          }
         }
 
         if (!inviteInput) {
+          if (url) {
+            this.startInviteCountdown();
+          } else {
+            this.stopInviteCountdown(true);
+          }
+          this.updateInviteVisuals();
           return;
         }
 
@@ -1553,13 +1631,370 @@ This invite can be used only once. Share the link privately.`;
           inviteInput.value = url;
           inviteInput.dataset.link = url;
           inviteInput.setAttribute('aria-label', 'Copy secure invite link');
+          this.startInviteCountdown();
         } else {
-          inviteInput.value = 'Generating secure link...';
+          inviteInput.value = this.invitePanelUnlocked ? 'Generate a secure link to share.' : 'Generating secure link...';
           delete inviteInput.dataset.link;
+          this.stopInviteCountdown(true);
+        }
+
+        this.updateInviteVisuals();
+      }
+
+      formatInviteDuration(msRemaining) {
+        if (!Number.isFinite(msRemaining) || msRemaining <= 0) {
+          return '0s';
+        }
+        const totalSeconds = Math.max(0, Math.floor(msRemaining / 1000));
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        if (minutes >= 60) {
+          const hours = Math.floor(minutes / 60);
+          const remainingMinutes = minutes % 60;
+          return `${hours}h ${remainingMinutes}m`;
+        }
+        if (minutes > 0) {
+          return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
+        }
+        return `${seconds}s`;
+      }
+
+      startInviteCountdown() {
+        if (this.inviteCountdownTimer) {
+          clearInterval(this.inviteCountdownTimer);
+          this.inviteCountdownTimer = null;
+        }
+
+        const countdownEl = DOM.inviteCountdown;
+        const statusDot = DOM.inviteStatusDot;
+        const copyBtn = DOM.copyInviteBtn;
+        const shareBtn = DOM.shareInviteBtn;
+        const activeInvite = DOM.activeInvite;
+
+        if (statusDot) {
+          statusDot.classList.add('pulse');
+        }
+        if (activeInvite) {
+          activeInvite.classList.remove('expired');
+        }
+        if (copyBtn) {
+          copyBtn.disabled = false;
+        }
+        if (shareBtn) {
+          shareBtn.disabled = false;
+        }
+
+        if (!countdownEl) {
+          return;
+        }
+
+        const update = () => {
+          const expiresAt = this.seats?.guest?.expiresAt;
+          if (!Number.isFinite(expiresAt)) {
+            countdownEl.textContent = 'Active invite ready to share';
+            return;
+          }
+          const remaining = expiresAt - Date.now();
+          if (remaining <= 0) {
+            countdownEl.textContent = 'Invite expired – generate a new link';
+            if (statusDot) {
+              statusDot.classList.remove('pulse');
+            }
+            if (activeInvite) {
+              activeInvite.classList.add('expired');
+            }
+            if (copyBtn) {
+              copyBtn.disabled = true;
+            }
+            if (shareBtn) {
+              shareBtn.disabled = true;
+            }
+            this.stopInviteCountdown();
+            return;
+          }
+          countdownEl.textContent = `Active invite · expires in ${this.formatInviteDuration(remaining)}`;
+        };
+
+        update();
+        this.inviteCountdownTimer = setInterval(update, 1000);
+      }
+
+      stopInviteCountdown(resetMessage = false) {
+        if (this.inviteCountdownTimer) {
+          clearInterval(this.inviteCountdownTimer);
+          this.inviteCountdownTimer = null;
+        }
+        const statusDot = DOM.inviteStatusDot;
+        if (statusDot) {
+          statusDot.classList.remove('pulse');
+        }
+        if (resetMessage) {
+          const countdownEl = DOM.inviteCountdown;
+          if (countdownEl) {
+            countdownEl.textContent = this.invitePanelUnlocked ? 'No active invite' : 'Generate an invite to share.';
+          }
+        }
+        const activeInvite = DOM.activeInvite;
+        if (activeInvite) {
+          activeInvite.classList.remove('expired');
         }
       }
 
-      async refreshGuestInvite({ bannerMessage = 'Share this one-time secure link with your guest.', announce = false } = {}) {
+      buildSeatVisualModel() {
+        const capacity = Number.isFinite(this.inviteSeatCapacity) ? this.inviteSeatCapacity : 4;
+        const seats = [];
+
+        const hostName = this.localIdentity?.displayName || (this.isHost ? 'You' : 'Host');
+        const hostAvatar = this.localIdentity?.avatar?.emoji || '🛡️';
+
+        seats.push({
+          status: 'occupied',
+          avatar: hostAvatar,
+          name: hostName,
+          subLabel: this.isHost ? 'This is you' : 'Host',
+          role: 'Host'
+        });
+
+        const guestSeat = this.seats?.guest;
+        const inviteActive = Boolean(this.currentShareLink);
+        const guestConnected = Boolean(this.conn);
+        const guestClaimed = Boolean(guestSeat?.claimed);
+        const remoteName = this.remoteIdentity?.displayName || 'Guest';
+        const remoteAvatar = this.remoteIdentity?.avatar?.emoji || '🙂';
+
+        if (guestConnected || guestClaimed) {
+          seats.push({
+            status: 'occupied',
+            avatar: remoteAvatar,
+            name: remoteName,
+            subLabel: guestConnected ? 'Connected guest' : 'Invite claimed',
+            role: 'Guest'
+          });
+        } else if (inviteActive && guestSeat?.seatId) {
+          seats.push({
+            status: 'reserved',
+            icon: '⏳',
+            label: 'Invite pending',
+            subLabel: 'Waiting for guest',
+            role: 'Guest'
+          });
+        } else {
+          seats.push({
+            status: 'available',
+            icon: '+',
+            label: 'Available seat',
+            subLabel: 'Ready to invite',
+            role: 'Guest'
+          });
+        }
+
+        while (seats.length < capacity) {
+          const index = seats.length + 1;
+          seats.push({
+            status: 'available',
+            icon: '+',
+            label: 'Available seat',
+            subLabel: 'Ready when you are',
+            role: `Seat ${index}`
+          });
+        }
+
+        return seats.slice(0, capacity);
+      }
+
+      updateInviteVisuals() {
+        if (typeof document === 'undefined') {
+          return;
+        }
+        const grid = DOM.inviteSeatsGrid;
+        if (!grid) {
+          return;
+        }
+
+        const seats = this.buildSeatVisualModel();
+        grid.innerHTML = '';
+
+        seats.forEach((seat) => {
+          const element = document.createElement('div');
+          element.className = `seat ${seat.status}`;
+          if (seat.role) {
+            element.dataset.role = seat.role;
+          } else {
+            element.removeAttribute('data-role');
+          }
+
+          if (seat.status === 'occupied') {
+            const avatar = document.createElement('div');
+            avatar.className = 'seat-avatar';
+            avatar.textContent = seat.avatar || '🙂';
+            element.appendChild(avatar);
+
+            const name = document.createElement('span');
+            name.className = 'seat-name';
+            name.textContent = seat.name || 'Member';
+            element.appendChild(name);
+
+            if (seat.subLabel) {
+              const label = document.createElement('span');
+              label.className = 'seat-label seat-sub-label';
+              label.textContent = seat.subLabel;
+              element.appendChild(label);
+            }
+          } else {
+            const placeholder = document.createElement('div');
+            placeholder.className = 'empty-seat';
+            placeholder.textContent = seat.icon || '+';
+            element.appendChild(placeholder);
+
+            const label = document.createElement('span');
+            label.className = 'seat-label';
+            label.textContent = seat.label || 'Available';
+            element.appendChild(label);
+
+            if (seat.subLabel) {
+              const sub = document.createElement('span');
+              sub.className = 'seat-label seat-sub-label';
+              sub.textContent = seat.subLabel;
+              element.appendChild(sub);
+            }
+          }
+
+          grid.appendChild(element);
+        });
+
+        const info = DOM.inviteSeatsInfo;
+        if (info) {
+          const availableSeats = seats.filter((seat) => seat.status === 'available').length;
+          info.textContent = `${availableSeats} of ${seats.length} seats available`;
+        }
+      }
+
+      async handleGenerateInviteClick() {
+        if (!this.isHost || !this.roomId) {
+          if (typeof this.showToast === 'function') {
+            this.showToast('Start a secure room first.', 'info');
+          }
+          return;
+        }
+
+        if (this.conn) {
+          if (typeof this.showToast === 'function') {
+            this.showToast('A guest is already connected.', 'warning');
+          }
+          return;
+        }
+
+        const button = DOM.generateInviteBtn;
+        if (button) {
+          if (button.dataset.loading === 'true') {
+            return;
+          }
+          button.dataset.loading = 'true';
+          button.disabled = true;
+        }
+
+        try {
+          await this.refreshGuestInvite({ announce: true });
+        } catch (error) {
+          console.error('Failed to generate invite link.', error);
+          if (typeof this.showToast === 'function') {
+            this.showToast('Unable to generate invite. Please try again.', 'error');
+          }
+        } finally {
+          if (button) {
+            delete button.dataset.loading;
+            button.disabled = false;
+          }
+        }
+      }
+
+      async showInviteShareOptions() {
+        const inviteInput = DOM.inviteLink;
+        const storedLink = inviteInput?.dataset?.link || '';
+        const link = this.currentShareLink || storedLink;
+
+        if (!link) {
+          if (typeof this.showToast === 'function') {
+            this.showToast('Generate an invite link first.', 'info');
+          }
+          return;
+        }
+
+        const shareData = {
+          title: 'Secure Room Invite',
+          text: `Join my secure room ${this.roomId || ''}`.trim(),
+          url: link
+        };
+
+        if (typeof navigator !== 'undefined' && navigator.share) {
+          try {
+            await navigator.share(shareData);
+            if (typeof this.showToast === 'function') {
+              this.showToast('Invite shared.', 'success');
+            }
+            return;
+          } catch (error) {
+            if (error?.name === 'AbortError') {
+              return;
+            }
+            console.warn('Native share failed.', error);
+          }
+        }
+
+        if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+          try {
+            await navigator.clipboard.writeText(link);
+            if (typeof this.showToast === 'function') {
+              this.showToast('Invite link copied to clipboard.', 'success');
+            }
+            return;
+          } catch (error) {
+            console.warn('Unable to copy invite link.', error);
+          }
+        }
+
+        alert(`Copy this invite link:\n${link}`);
+      }
+
+      async cancelActiveInvite() {
+        if (!this.isHost) {
+          return;
+        }
+
+        if (!this.currentShareLink) {
+          if (typeof this.showToast === 'function') {
+            this.showToast('No active invite to cancel.', 'info');
+          }
+          return;
+        }
+
+        if (this.conn) {
+          if (typeof this.showToast === 'function') {
+            this.showToast('A guest is already connected. Disconnect to reset invites.', 'warning');
+          }
+          return;
+        }
+
+        try {
+          await this.refreshGuestInvite({
+            bannerMessage: 'Invite cancelled. Generate a new link when you’re ready to share again.',
+            displayLink: false
+          });
+          this.currentInvite = null;
+          this.currentShareLink = '';
+          this.updateInviteLink('');
+          this.addSystemMessage('🚫 Active invite cancelled. Generate a new one when you’re ready.');
+        } catch (error) {
+          console.warn('Failed to cancel invite.', error);
+          if (typeof this.showToast === 'function') {
+            this.showToast('Unable to cancel invite. Please try again.', 'error');
+          }
+        }
+
+        this.updateInviteVisuals();
+      }
+
+      async refreshGuestInvite({ bannerMessage = 'Share this one-time secure link with your guest.', announce = false, displayLink = true } = {}) {
         if (!this.isHost || !this.roomId) {
           return null;
         }
@@ -1598,20 +2033,27 @@ This invite can be used only once. Share the link privately.`;
         this.updateFingerprintDisplay(null);
 
         let link = '';
-        try {
-          link = await this.generateShareLink(this.roomId, newSeat);
-        } catch (error) {
-          console.error('Failed to encode refreshed invite.', error);
-          this.addSystemMessage('⚠️ Unable to encode the new invite link.');
-          return null;
+        if (displayLink) {
+          try {
+            link = await this.generateShareLink(this.roomId, newSeat);
+          } catch (error) {
+            console.error('Failed to encode refreshed invite.', error);
+            this.addSystemMessage('⚠️ Unable to encode the new invite link.');
+            return null;
+          }
+        } else {
+          this.currentInvite = null;
+          this.currentShareLink = '';
         }
 
-        this.updateInviteLink(link);
+        this.updateInviteLink(displayLink ? link : '');
         this.updateSimpleShareStatus('');
-        this.setWaitingBanner(true, link, bannerMessage);
-        if (announce) {
+        this.setWaitingBanner(true, displayLink ? link : '', bannerMessage);
+        if (announce && displayLink) {
           this.addSystemMessage('✨ Generated a fresh secure invite link.');
         }
+
+        this.updateInviteVisuals();
 
         return link;
       }
@@ -1623,6 +2065,9 @@ This invite can be used only once. Share the link privately.`;
         }
 
         const storedLink = elem.dataset?.link;
+        if (!storedLink && targetId === 'inviteLink') {
+          return;
+        }
         let link = storedLink;
         if (!link) {
           if (typeof elem.value === 'string') {
@@ -2363,6 +2808,7 @@ This invite can be used only once. Share the link privately.`;
         }
 
         this.seats = { host: hostSeat, guest: guestSeat };
+        this.updateInviteVisuals();
 
         const seatSalt = SecureInvite.fromBase64Url(guestSeat.seatId);
         if (!(seatSalt instanceof Uint8Array)) {
@@ -2430,6 +2876,7 @@ This invite can be used only once. Share the link privately.`;
         this.isHost = false;
         this.currentShareLink = '';
         this.seats = { host: null, guest: { ...invite, claimed: true } };
+        this.updateInviteVisuals();
         this.resetConversationState();
         CryptoManager.setRoomSalt(seatBytes);
         this.roomSalt = CryptoManager.getRoomSalt();
@@ -3375,9 +3822,12 @@ Current Key: ${CryptoManager.getCurrentKey() ? 'Loaded ✓' : 'Not set ✗'}</pr
         CryptoManager.reset();
         this.resetIdentityState();
 
+        this.invitePanelUnlocked = false;
+        this.stopInviteCountdown(true);
         this.updateInviteLink('');
         this.updateSimpleShareStatus('');
         this.updateFingerprintDisplay(null);
+        this.updateInviteVisuals();
 
         if (this.conn) this.conn.close();
         if (this.peer) this.peer.destroy();
