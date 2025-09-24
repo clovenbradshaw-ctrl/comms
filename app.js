@@ -8,6 +8,15 @@ const DOM = {
   inviteSection: document.getElementById('inviteSection'),
   joinStatus: document.getElementById('joinStatus'),
   joinStatusDetail: document.getElementById('joinStatusDetail'),
+  joinLinkInput: document.getElementById('joinLinkInput'),
+  joinLinkButton: document.getElementById('joinBtn'),
+  joinCodeButton: document.getElementById('joinCodeBtn'),
+  joinCodeInputs: Array.from(document.querySelectorAll('[data-code-input]')),
+  joinTabs: Array.from(document.querySelectorAll('[data-join-tab]')),
+  joinTabContents: Array.from(document.querySelectorAll('[data-join-content]')),
+  joiningOverlay: document.getElementById('joiningOverlay'),
+  quickJoin: document.getElementById('quickJoin'),
+  quickJoinBtn: document.getElementById('quickJoinBtn'),
   waitingBanner: document.getElementById('waitingBanner'),
   chatShareLink: document.getElementById('chatShareLink'),
   waitingMessage: document.getElementById('waitingMessage'),
@@ -18,6 +27,9 @@ const DOM = {
   hostScreen: document.getElementById('hostScreen'),
   joinScreen: document.getElementById('joinScreen'),
   chatScreen: document.getElementById('chatScreen'),
+  shareOverlayContainer: document.getElementById('shareOverlayContainer'),
+  floatingShare: document.getElementById('floatingShare'),
+  shareConfirmationContainer: document.getElementById('shareConfirmationContainer'),
   currentRoom: document.getElementById('currentRoom'),
   roomHistory: document.getElementById('roomHistory'),
   historyItems: document.getElementById('historyItems'),
@@ -508,6 +520,13 @@ class SecureChat {
         this.isHost = false;
         this.currentShareLink = '';
         this.currentInvite = null;
+        this.inviteCodeSegments = [];
+        this.shareOverlayVisible = false;
+        this.shareOverlayMinimized = false;
+        this.activeJoinTab = 'link';
+        this.detectedClipboardInvite = null;
+        this.shareOverlayEl = null;
+        this.shareRoomCodeEl = null;
         this.seats = { host: null, guest: null };
         this.localUserId = generateId('user-');
         this.remoteUserId = null;
@@ -635,6 +654,13 @@ class SecureChat {
         if (DOM.copyInviteBtn) {
           DOM.copyInviteBtn.addEventListener('click', () => this.copyShareLink('inviteLink'));
         }
+
+        if (DOM.floatingShare) {
+          DOM.floatingShare.addEventListener('click', () => this.reopenShareOverlay());
+        }
+
+        this.setupJoinInterface();
+        this.setupWelcomeActions();
       }
 
       initSimpleSetup() {
@@ -664,6 +690,459 @@ class SecureChat {
 
         this.simpleEmailInput.addEventListener('change', persist);
         this.simpleEmailInput.addEventListener('blur', persist);
+      }
+
+      setupJoinInterface() {
+        const tabs = Array.isArray(DOM.joinTabs) ? DOM.joinTabs : [];
+        tabs.forEach((tab) => {
+          const tabName = tab.dataset.joinTab || 'link';
+          tab.addEventListener('click', () => this.setActiveJoinTab(tabName));
+        });
+
+        const linkInput = DOM.joinLinkInput;
+        if (linkInput) {
+          linkInput.addEventListener('input', () => this.validateJoinLink());
+          linkInput.addEventListener('paste', (event) => this.handleJoinPaste(event));
+          linkInput.addEventListener('keypress', (event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              this.joinWithLink();
+            }
+          });
+        }
+
+        const joinButton = DOM.joinLinkButton;
+        if (joinButton) {
+          joinButton.addEventListener('click', () => this.joinWithLink());
+        }
+
+        const joinCodeButton = DOM.joinCodeButton;
+        if (joinCodeButton) {
+          joinCodeButton.addEventListener('click', () => this.joinWithCode());
+        }
+
+        const codeInputs = Array.isArray(DOM.joinCodeInputs) ? DOM.joinCodeInputs : [];
+        codeInputs.forEach((input, index) => {
+          input.addEventListener('input', (event) => this.handleCodeInput(event, index));
+          input.addEventListener('paste', (event) => this.handleCodePaste(event));
+          input.addEventListener('keypress', (event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              this.joinWithCode();
+            }
+          });
+        });
+      }
+
+      setupWelcomeActions() {
+        if (DOM.quickJoinBtn) {
+          DOM.quickJoinBtn.addEventListener('click', () => this.quickJoinFromClipboard());
+        }
+      }
+
+      setActiveJoinTab(tabName = 'link') {
+        const normalized = tabName === 'code' ? 'code' : 'link';
+        this.activeJoinTab = normalized;
+
+        const tabs = Array.isArray(DOM.joinTabs) ? DOM.joinTabs : [];
+        tabs.forEach((tab) => {
+          const isActive = (tab.dataset.joinTab || 'link') === normalized;
+          tab.classList.toggle('active', isActive);
+          tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        });
+
+        const contents = Array.isArray(DOM.joinTabContents) ? DOM.joinTabContents : [];
+        contents.forEach((content) => {
+          const isActive = (content.dataset.joinContent || 'link') === normalized;
+          content.classList.toggle('active', isActive);
+        });
+
+        if (normalized === 'link' && DOM.joinLinkInput) {
+          setTimeout(() => DOM.joinLinkInput?.focus(), 50);
+        } else if (normalized === 'code') {
+          const inputs = Array.isArray(DOM.joinCodeInputs) ? DOM.joinCodeInputs : [];
+          if (inputs[0]) {
+            setTimeout(() => inputs[0]?.focus(), 50);
+          }
+        }
+      }
+
+      resetJoinInputs() {
+        if (DOM.joinLinkInput) {
+          DOM.joinLinkInput.value = '';
+        }
+        if (DOM.joinLinkButton) {
+          DOM.joinLinkButton.disabled = true;
+          DOM.joinLinkButton.setAttribute('aria-disabled', 'true');
+        }
+
+        const codeInputs = Array.isArray(DOM.joinCodeInputs) ? DOM.joinCodeInputs : [];
+        codeInputs.forEach((input) => {
+          input.value = '';
+        });
+
+        if (DOM.joinCodeButton) {
+          DOM.joinCodeButton.disabled = true;
+          DOM.joinCodeButton.setAttribute('aria-disabled', 'true');
+        }
+      }
+
+      validateJoinLink() {
+        const linkInput = DOM.joinLinkInput;
+        const joinButton = DOM.joinLinkButton;
+        if (!linkInput || !joinButton) {
+          return;
+        }
+        const value = linkInput.value.trim();
+        const invite = this.parseInviteFromLink(value);
+        const isValid = Boolean(invite);
+        joinButton.disabled = !isValid;
+        joinButton.setAttribute('aria-disabled', isValid ? 'false' : 'true');
+      }
+
+      validateJoinCode() {
+        const codeInputs = Array.isArray(DOM.joinCodeInputs) ? DOM.joinCodeInputs : [];
+        const joinButton = DOM.joinCodeButton;
+        if (!joinButton) {
+          return;
+        }
+
+        const segments = codeInputs.map((input) => input.value.trim()).filter(Boolean);
+        const invite = segments.length >= 3 ? this.parseInviteFromCode(segments) : null;
+        const isValid = Boolean(invite);
+        joinButton.disabled = !isValid;
+        joinButton.setAttribute('aria-disabled', isValid ? 'false' : 'true');
+      }
+
+      handleJoinPaste(event) {
+        if (!event?.clipboardData) {
+          return;
+        }
+        const pasted = event.clipboardData.getData('text');
+        if (!pasted) {
+          return;
+        }
+        event.preventDefault();
+        if (DOM.joinLinkInput) {
+          DOM.joinLinkInput.value = pasted.trim();
+        }
+        this.validateJoinLink();
+        setTimeout(() => {
+          const linkInput = DOM.joinLinkInput;
+          if (linkInput && this.parseInviteFromLink(linkInput.value.trim())) {
+            this.joinWithLink();
+          }
+        }, 100);
+      }
+
+      handleCodeInput(event, index = 0) {
+        const input = event?.target;
+        if (!input) {
+          return;
+        }
+
+        input.value = input.value.replace(/\s+/g, '');
+
+        if (input.maxLength && input.value.length >= input.maxLength) {
+          const codeInputs = Array.isArray(DOM.joinCodeInputs) ? DOM.joinCodeInputs : [];
+          if (codeInputs[index + 1]) {
+            codeInputs[index + 1].focus();
+          }
+        }
+
+        this.validateJoinCode();
+      }
+
+      handleCodePaste(event) {
+        if (!event?.clipboardData) {
+          return;
+        }
+        const pasted = event.clipboardData.getData('text');
+        if (!pasted) {
+          return;
+        }
+        event.preventDefault();
+        const segments = this.splitInviteIntoSegments(pasted);
+        const codeInputs = Array.isArray(DOM.joinCodeInputs) ? DOM.joinCodeInputs : [];
+        codeInputs.forEach((input, idx) => {
+          input.value = segments[idx] || '';
+        });
+        this.validateJoinCode();
+        setTimeout(() => {
+          if (segments.filter(Boolean).length >= 3 && this.parseInviteFromCode(segments)) {
+            this.joinWithCode();
+          }
+        }, 100);
+      }
+
+      async joinWithLink() {
+        const linkInput = DOM.joinLinkInput;
+        if (!linkInput) {
+          return;
+        }
+        const value = linkInput.value.trim();
+        const invite = this.parseInviteFromLink(value);
+        if (!invite) {
+          this.showToast('Enter a valid invite link.', 'warning');
+          return;
+        }
+        await this.beginJoinFromInvite(invite);
+      }
+
+      async joinWithCode() {
+        const codeInputs = Array.isArray(DOM.joinCodeInputs) ? DOM.joinCodeInputs : [];
+        const segments = codeInputs.map((input) => input.value.trim()).filter(Boolean);
+        const invite = this.parseInviteFromCode(segments);
+        if (!invite) {
+          this.showToast('Enter a valid room code.', 'warning');
+          return;
+        }
+        await this.beginJoinFromInvite(invite);
+      }
+
+      parseInviteFromLink(value) {
+        if (typeof value !== 'string') {
+          return null;
+        }
+
+        let trimmed = value.trim();
+        if (!trimmed) {
+          return null;
+        }
+
+        let encoded = '';
+
+        const baseOrigin = typeof window !== 'undefined' && window.location ? window.location.origin : 'https://example.com';
+        try {
+          const url = new URL(trimmed, baseOrigin);
+          if (url.hash && url.hash.startsWith('#/j/')) {
+            encoded = decodeURIComponent(url.hash.slice(4));
+          } else if (url.hash && url.hash.startsWith('#/join/')) {
+            const parts = url.hash.replace(/^#+/, '').split('/');
+            if (parts.length >= 4) {
+              return {
+                roomId: parts[1],
+                seatId: parts[2],
+                secretKey: parts[3]
+              };
+            }
+          } else if (url.pathname.includes('/j/')) {
+            encoded = decodeURIComponent(url.pathname.split('/j/')[1]);
+          }
+        } catch (error) {
+          // Not a URL; fall back to raw parsing
+        }
+
+        if (!encoded) {
+          if (trimmed.startsWith('#/j/')) {
+            encoded = decodeURIComponent(trimmed.slice(4));
+          } else if (trimmed.startsWith('#/join/')) {
+            const parts = trimmed.replace(/^#+/, '').split('/');
+            if (parts.length >= 4) {
+              return {
+                roomId: parts[1],
+                seatId: parts[2],
+                secretKey: parts[3]
+              };
+            }
+          } else if (trimmed.startsWith('#')) {
+            const hash = trimmed.replace(/^#+/, '#');
+            if (hash.startsWith('#/j/')) {
+              encoded = decodeURIComponent(hash.slice(4));
+            }
+          }
+        }
+
+        if (!encoded && /^[A-Za-z0-9_-]+$/.test(trimmed)) {
+          encoded = trimmed;
+        }
+
+        if (!encoded) {
+          return null;
+        }
+
+        return this.decodeInvitePayload(encoded);
+      }
+
+      parseInviteFromCode(segments = []) {
+        if (!Array.isArray(segments) || segments.length === 0) {
+          return null;
+        }
+        const combined = segments.map((segment) => segment.trim()).filter(Boolean).join('');
+        if (!combined) {
+          return null;
+        }
+        return this.decodeInvitePayload(combined);
+      }
+
+      decodeInvitePayload(encoded) {
+        if (typeof encoded !== 'string' || !encoded) {
+          return null;
+        }
+
+        let payload;
+        try {
+          payload = SecureInvite.decodePayload(encoded);
+        } catch (error) {
+          console.warn('Unable to decode invite payload.', error);
+          return null;
+        }
+
+        if (!payload) {
+          return null;
+        }
+
+        const invite = {
+          roomId: payload.roomId || payload.r,
+          seatId: payload.seatId || payload.s,
+          secretKey: payload.secretKey || payload.k,
+          expiresAt: payload.expiresAt || payload.e,
+          signature: payload.signature || payload.sig,
+          encoded
+        };
+
+        if (!invite.roomId || !invite.seatId || !invite.secretKey) {
+          return null;
+        }
+
+        return invite;
+      }
+
+      async ensureInviteSignature(invite) {
+        if (!invite || invite.signature) {
+          return invite;
+        }
+        try {
+          invite.signature = await SecureInvite.signInvite(
+            invite.roomId,
+            invite.seatId,
+            invite.secretKey,
+            invite.expiresAt || (Date.now() + 15 * 60 * 1000)
+          );
+        } catch (error) {
+          console.warn('Unable to derive invite signature from payload.', error);
+        }
+        return invite;
+      }
+
+      async beginJoinFromInvite(invite, { clearHash = false } = {}) {
+        if (!invite) {
+          return false;
+        }
+
+        await this.ensureInviteSignature(invite);
+
+        const detailMessage = invite.expiresAt
+          ? 'Verifying token and expiration...'
+          : 'Verifying one-time token...';
+
+        this.showJoin('Claiming your secure seat...', detailMessage);
+        this.showJoiningOverlay('Claiming your secure seat...', detailMessage);
+
+        try {
+          await this.startJoinFromInvite(invite);
+          if (clearHash && typeof window !== 'undefined' && window.history && window.location.hash) {
+            window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+          }
+          return true;
+        } catch (error) {
+          console.error('Failed to join using invite.', error);
+          const message = error?.message || 'Unable to use this invite link.';
+          this.hideJoiningOverlay();
+          this.showJoin('Invite unavailable', message);
+          this.updateStatus('Error', '');
+          return false;
+        }
+      }
+
+      showJoiningOverlay(message = 'Joining room...', detail = '') {
+        const overlay = DOM.joiningOverlay;
+        const status = DOM.joinStatus;
+        const detailEl = DOM.joinStatusDetail;
+
+        if (status) {
+          status.textContent = message;
+        }
+
+        if (detailEl) {
+          detailEl.textContent = detail || '';
+          detailEl.style.display = detail ? '' : 'none';
+        }
+
+        if (overlay) {
+          overlay.style.display = 'flex';
+        }
+      }
+
+      hideJoiningOverlay() {
+        const overlay = DOM.joiningOverlay;
+        if (overlay) {
+          overlay.style.display = 'none';
+        }
+      }
+
+      splitInviteIntoSegments(value) {
+        if (typeof value !== 'string') {
+          return [];
+        }
+        const cleaned = value.trim();
+        if (!cleaned) {
+          return [];
+        }
+        const normalized = cleaned.replace(/\s+/g, '');
+        const filtered = normalized.replace(/[^A-Za-z0-9_-]/g, '');
+        if (!filtered) {
+          return [];
+        }
+        const groups = Math.min(3, Math.max(filtered.length, 1));
+        const segmentLength = Math.ceil(filtered.length / groups);
+        const segments = [];
+        for (let i = 0; i < filtered.length; i += segmentLength) {
+          segments.push(filtered.slice(i, i + segmentLength));
+        }
+        while (segments.length < 3) {
+          segments.push('');
+        }
+        return segments.slice(0, 3);
+      }
+
+      async quickJoinFromClipboard() {
+        if (!this.detectedClipboardInvite) {
+          this.showToast('No invite detected in clipboard.', 'warning');
+          return;
+        }
+        const invite = { ...this.detectedClipboardInvite };
+        await this.beginJoinFromInvite(invite);
+      }
+
+      updateQuickJoinBanner(invite) {
+        const banner = DOM.quickJoin;
+        if (!banner) {
+          return;
+        }
+        if (invite) {
+          banner.style.display = 'flex';
+        } else {
+          banner.style.display = 'none';
+        }
+      }
+
+      async checkClipboardForInvite() {
+        if (!navigator?.clipboard?.readText) {
+          this.detectedClipboardInvite = null;
+          this.updateQuickJoinBanner(null);
+          return;
+        }
+
+        try {
+          const text = (await navigator.clipboard.readText())?.trim();
+          const invite = text ? this.parseInviteFromLink(text) : null;
+          this.detectedClipboardInvite = invite || null;
+          this.updateQuickJoinBanner(invite || null);
+        } catch (error) {
+          this.detectedClipboardInvite = null;
+          this.updateQuickJoinBanner(null);
+        }
       }
 
       applyVisualConfig() {
@@ -1639,69 +2118,13 @@ This invite can be used only once. Share the link privately.`;
           return;
         }
 
-        const hash = window.location.hash || '';
-        let invitePayload = null;
-
-        if (hash.startsWith('#/j/')) {
-          const encoded = decodeURIComponent(hash.slice(4));
-          invitePayload = SecureInvite.decodePayload(encoded);
-        } else if (hash.startsWith('#/join/')) {
-          const parts = hash.replace(/^#\/+/, '').split('/');
-          if (parts.length >= 4) {
-            invitePayload = {
-              r: parts[1],
-              s: parts[2],
-              k: parts[3]
-            };
-          }
-        }
-
-        if (!invitePayload) {
+        const invite = this.parseInviteFromLink(window.location.href || window.location.hash || '');
+        if (!invite) {
           return;
         }
 
-        const invite = {
-          roomId: invitePayload.roomId || invitePayload.r,
-          seatId: invitePayload.seatId || invitePayload.s,
-          secretKey: invitePayload.secretKey || invitePayload.k,
-          expiresAt: invitePayload.expiresAt || invitePayload.e,
-          signature: invitePayload.signature || invitePayload.sig
-        };
-
-        if (!invite.roomId || !invite.seatId || !invite.secretKey) {
-          console.warn('Invite link missing required parameters.');
-          return;
-        }
-
-        if (!invite.signature) {
-          try {
-            invite.signature = await SecureInvite.signInvite(
-              invite.roomId,
-              invite.seatId,
-              invite.secretKey,
-              invite.expiresAt
-            );
-          } catch (error) {
-            console.warn('Unable to derive invite signature from payload.', error);
-          }
-        }
-
-        const detailMessage = invite.expiresAt
-          ? 'Verifying token and expiration...'
-          : 'Verifying one-time token...';
-        this.showJoin('Claiming your secure seat...', detailMessage);
-
-        try {
-          await this.startJoinFromInvite(invite);
-          if (window.history && window.location.hash) {
-            window.history.replaceState({}, document.title, window.location.pathname);
-          }
-        } catch (error) {
-          console.error('Failed to join using invite.', error);
-          const message = error?.message || 'Unable to use this invite link.';
-          this.showJoin('Invite unavailable', message);
-          this.updateStatus('Error', '');
-        }
+        const hashPresent = Boolean(window.location.hash);
+        await this.beginJoinFromInvite(invite, { clearHash: hashPresent });
       }
 
       async createInvitePayload(roomId, seat) {
@@ -1766,6 +2189,350 @@ This invite can be used only once. Share the link privately.`;
         }
       }
 
+      renderShareOverlay({ autoShow = false } = {}) {
+        if (!this.isHost || !this.currentInvite || !DOM.shareOverlayContainer) {
+          return;
+        }
+
+        const overlay = this.ensureShareOverlayElements();
+        if (!overlay) {
+          return;
+        }
+
+        this.updateShareOverlayContent();
+
+        if (autoShow) {
+          setTimeout(() => this.showShareOverlay(), 300);
+        } else if (this.shareOverlayVisible) {
+          this.showShareOverlay();
+        }
+      }
+
+      ensureShareOverlayElements() {
+        if (!DOM.shareOverlayContainer) {
+          return null;
+        }
+
+        if (this.shareOverlayEl instanceof HTMLElement) {
+          return this.shareOverlayEl;
+        }
+
+        const container = DOM.shareOverlayContainer;
+        container.innerHTML = `
+          <div class="share-overlay" id="shareOverlay" hidden aria-hidden="true">
+            <div class="share-card">
+              <div class="share-header">
+                <h3>Your room is ready!</h3>
+                <button class="close-btn" type="button" data-share-action="minimize" aria-label="Hide invite overlay">×</button>
+              </div>
+              <div class="room-code-display">
+                <span class="code-label">Room Code</span>
+                <div class="code-value" id="shareRoomCode">Preparing…</div>
+                <span class="code-hint">Share verbally or use link below</span>
+              </div>
+              <div class="share-actions">
+                <button class="share-btn primary" type="button" data-share-action="native">
+                  <span class="icon">📤</span>
+                  <span>Share</span>
+                </button>
+                <button class="share-btn" type="button" data-share-action="copy">
+                  <span class="icon">📋</span>
+                  <span>Copy Link</span>
+                </button>
+                <button class="share-btn" type="button" data-share-action="qr">
+                  <span class="icon">📱</span>
+                  <span>QR Code</span>
+                </button>
+                <button class="share-btn" type="button" data-share-action="sms">
+                  <span class="icon">💬</span>
+                  <span>Text</span>
+                </button>
+              </div>
+              <div class="share-warning">
+                <span class="warning-icon">⚠️</span>
+                <span>Each invite works once • Expires in 15 min</span>
+              </div>
+              <button class="minimize-btn" type="button" data-share-action="minimize">
+                Got it, I'll share later
+              </button>
+            </div>
+          </div>
+        `;
+
+        const overlay = container.querySelector('#shareOverlay');
+        if (!overlay) {
+          return null;
+        }
+
+        overlay.addEventListener('click', (event) => {
+          if (event.target === overlay) {
+            this.minimizeShareOverlay();
+          }
+        });
+
+        container.querySelectorAll('[data-share-action]').forEach((btn) => {
+          const action = btn.getAttribute('data-share-action');
+          if (action === 'minimize') {
+            btn.addEventListener('click', () => this.minimizeShareOverlay());
+          } else if (action === 'native') {
+            btn.addEventListener('click', () => this.nativeShareInvite());
+          } else if (action === 'copy') {
+            btn.addEventListener('click', () => this.copyShareLink('inviteUrl', { link: this.currentShareLink }));
+          } else if (action === 'qr') {
+            btn.addEventListener('click', () => this.showShareConfirmation({ focus: 'qr' }));
+          } else if (action === 'sms') {
+            btn.addEventListener('click', () => this.shareInviteViaSMS());
+          }
+        });
+
+        this.shareOverlayEl = overlay;
+        this.shareRoomCodeEl = container.querySelector('#shareRoomCode');
+
+        return overlay;
+      }
+
+      updateShareOverlayContent() {
+        if (!this.shareOverlayEl) {
+          return;
+        }
+
+        const segments = this.buildInviteCodeSegments();
+        if (this.shareRoomCodeEl) {
+          const displaySegments = Array.isArray(segments) ? segments.filter(Boolean) : [];
+          if (displaySegments.length > 0) {
+            this.shareRoomCodeEl.textContent = displaySegments.join(' ');
+          } else {
+            this.shareRoomCodeEl.textContent = this.formatRoomCode(this.roomId);
+          }
+        }
+
+        this.updateFloatingShareBadge();
+      }
+
+      buildInviteCodeSegments() {
+        if (this.currentInvite?.encoded) {
+          this.inviteCodeSegments = this.splitInviteIntoSegments(this.currentInvite.encoded);
+        } else if (this.currentShareLink?.includes('#/j/')) {
+          const encoded = decodeURIComponent(this.currentShareLink.split('#/j/')[1] || '');
+          this.inviteCodeSegments = this.splitInviteIntoSegments(encoded);
+        } else {
+          const fallback = this.formatRoomCode(this.roomId).split(' ');
+          this.inviteCodeSegments = fallback.filter(Boolean);
+        }
+        return Array.isArray(this.inviteCodeSegments) ? this.inviteCodeSegments : [];
+      }
+
+      formatRoomCode(roomId) {
+        if (typeof roomId !== 'string') {
+          return '';
+        }
+        const parts = roomId.split('-').slice(0, 3);
+        if (parts.length === 0) {
+          return roomId;
+        }
+        return parts.map((part) => part.replace(/[^a-zA-Z0-9]/g, '').toUpperCase()).filter(Boolean).join(' ');
+      }
+
+      showShareOverlay() {
+        const overlay = this.ensureShareOverlayElements();
+        if (!overlay) {
+          return;
+        }
+        overlay.removeAttribute('hidden');
+        overlay.setAttribute('aria-hidden', 'false');
+        this.shareOverlayVisible = true;
+        this.shareOverlayMinimized = false;
+        if (DOM.floatingShare) {
+          DOM.floatingShare.hidden = true;
+        }
+      }
+
+      minimizeShareOverlay() {
+        if (!this.shareOverlayEl) {
+          return;
+        }
+        this.shareOverlayEl.setAttribute('hidden', 'true');
+        this.shareOverlayEl.setAttribute('aria-hidden', 'true');
+        this.shareOverlayVisible = false;
+        this.shareOverlayMinimized = true;
+        this.updateFloatingShareBadge();
+      }
+
+      reopenShareOverlay() {
+        this.showShareOverlay();
+      }
+
+      hideShareOverlay() {
+        if (this.shareOverlayEl) {
+          this.shareOverlayEl.setAttribute('hidden', 'true');
+          this.shareOverlayEl.setAttribute('aria-hidden', 'true');
+        }
+        this.shareOverlayVisible = false;
+        this.shareOverlayMinimized = false;
+        if (DOM.floatingShare) {
+          DOM.floatingShare.hidden = true;
+        }
+      }
+
+      updateFloatingShareBadge() {
+        const button = DOM.floatingShare;
+        if (!button) {
+          return;
+        }
+        const badge = button.querySelector('.badge');
+        const available = this.seats?.guest?.claimed ? 0 : 1;
+        if (badge) {
+          badge.textContent = String(Math.max(available, 0));
+        }
+        button.hidden = !this.isHost || !this.shareOverlayMinimized;
+      }
+
+      async nativeShareInvite() {
+        const link = this.currentShareLink;
+        if (!link) {
+          this.showToast('Invite not ready yet.', 'warning');
+          return;
+        }
+
+        if (navigator?.share) {
+          try {
+            await navigator.share({ title: 'Secure Chat Invite', text: `Join my secure chat: ${link}` });
+            return;
+          } catch (error) {
+            console.warn('Native share failed, falling back to options.', error);
+          }
+        }
+
+        this.showShareConfirmation();
+      }
+
+      shareInviteViaEmail() {
+        const link = this.currentShareLink;
+        if (!link) {
+          return;
+        }
+        const subject = encodeURIComponent('Join my Secure Chat room');
+        const body = encodeURIComponent(`You're invited to a secure chat.\n\nOne-time link: ${link}\nExpires: 15 minutes after creation.\n\nThis invite can be used only once.`);
+        window.open(`mailto:?subject=${subject}&body=${body}`, '_blank');
+      }
+
+      shareInviteViaSMS() {
+        const link = this.currentShareLink;
+        if (!link) {
+          return;
+        }
+        const body = encodeURIComponent(`Join my secure chat: ${link}`);
+        window.location.href = `sms:?&body=${body}`;
+      }
+
+      shareInviteViaWhatsApp() {
+        const link = this.currentShareLink;
+        if (!link) {
+          return;
+        }
+        const text = encodeURIComponent(`Join my secure chat: ${link}`);
+        window.open(`https://wa.me/?text=${text}`, '_blank');
+      }
+
+      showInviteQRCode(container) {
+        const link = this.currentShareLink;
+        if (!link || !container) {
+          return;
+        }
+        const extras = container.querySelector('#shareExtras');
+        if (!extras) {
+          return;
+        }
+        const url = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(link)}`;
+        extras.innerHTML = `
+          <div class="qr-preview" style="margin:1rem 0; display:flex; justify-content:center;">
+            <img src="${url}" alt="Invite QR code" width="220" height="220" loading="lazy" />
+          </div>
+        `;
+      }
+
+      showShareConfirmation({ focus } = {}) {
+        if (!DOM.shareConfirmationContainer || !this.currentShareLink) {
+          return;
+        }
+
+        const container = DOM.shareConfirmationContainer;
+        container.innerHTML = `
+          <div class="share-confirmation-modal">
+            <div class="confirmation-content">
+              <button class="close-btn" type="button" aria-label="Close invite options">×</button>
+              <div class="success-icon">✨</div>
+              <h2>Invite Created!</h2>
+              <div class="invite-details">
+                <div class="detail-item"><span class="icon">🎟️</span><span>One-time use only</span></div>
+                <div class="detail-item"><span class="icon">⏱️</span><span>Expires in 15 minutes</span></div>
+                <div class="detail-item"><span class="icon">🔐</span><span>End-to-end encrypted</span></div>
+              </div>
+              <div class="share-grid">
+                <button class="share-option" data-share-option="copy"><div class="option-icon">📋</div><span>Copy Link</span></button>
+                <button class="share-option" data-share-option="email"><div class="option-icon">✉️</div><span>Email</span></button>
+                <button class="share-option" data-share-option="sms"><div class="option-icon">💬</div><span>Text/SMS</span></button>
+                <button class="share-option" data-share-option="qr"><div class="option-icon">📱</div><span>QR Code</span></button>
+                <button class="share-option" data-share-option="whatsapp"><div class="option-icon">📞</div><span>WhatsApp</span></button>
+                <button class="share-option" data-share-option="native"><div class="option-icon">📤</div><span>More...</span></button>
+              </div>
+              <div class="invite-link-display">
+                <input readonly value="${escapeHTML(this.currentShareLink)}" id="inviteUrl" onclick="this.select()" />
+              </div>
+              <div id="shareExtras"></div>
+              <button class="btn-primary" type="button" data-share-option="continue">Enter Room</button>
+            </div>
+          </div>
+        `;
+
+        const modal = container.querySelector('.share-confirmation-modal');
+        const content = container.querySelector('.confirmation-content');
+        const closeBtn = content?.querySelector('.close-btn');
+
+        if (closeBtn) {
+          closeBtn.addEventListener('click', () => this.closeShareConfirmation());
+        }
+
+        if (modal) {
+          modal.addEventListener('click', (event) => {
+            if (event.target === modal) {
+              this.closeShareConfirmation();
+            }
+          });
+        }
+
+        container.querySelectorAll('[data-share-option]').forEach((btn) => {
+          const option = btn.getAttribute('data-share-option');
+          if (option === 'copy') {
+            btn.addEventListener('click', () => this.copyShareLink('inviteUrl', { link: this.currentShareLink }));
+          } else if (option === 'email') {
+            btn.addEventListener('click', () => this.shareInviteViaEmail());
+          } else if (option === 'sms') {
+            btn.addEventListener('click', () => this.shareInviteViaSMS());
+          } else if (option === 'qr') {
+            btn.addEventListener('click', () => this.showInviteQRCode(content));
+          } else if (option === 'whatsapp') {
+            btn.addEventListener('click', () => this.shareInviteViaWhatsApp());
+          } else if (option === 'native') {
+            btn.addEventListener('click', () => this.nativeShareInvite());
+          } else if (option === 'continue') {
+            btn.addEventListener('click', () => this.closeShareConfirmation());
+          }
+        });
+
+        DOM.inviteLink = content?.querySelector('#inviteUrl');
+
+        if (focus === 'qr' && content) {
+          this.showInviteQRCode(content);
+        }
+      }
+
+      closeShareConfirmation() {
+        if (DOM.shareConfirmationContainer) {
+          DOM.shareConfirmationContainer.innerHTML = '';
+        }
+      }
+
       async refreshGuestInvite({ bannerMessage = 'Share this one-time secure link with your guest.', announce = false } = {}) {
         if (!this.isHost || !this.roomId) {
           return null;
@@ -1816,6 +2583,7 @@ This invite can be used only once. Share the link privately.`;
         this.updateInviteLink(link);
         this.updateSimpleShareStatus('');
         this.setWaitingBanner(true, link, bannerMessage);
+        this.renderShareOverlay({ autoShow: this.shareOverlayVisible });
         if (announce) {
           this.addSystemMessage('✨ Generated a fresh secure invite link.');
         }
@@ -1823,18 +2591,18 @@ This invite can be used only once. Share the link privately.`;
         return link;
       }
 
-      async copyShareLink(targetId = 'inviteLink') {
+      async copyShareLink(targetId = 'inviteLink', options = {}) {
         const elem = DOM[targetId] || document.getElementById(targetId);
-        if (!elem) {
-          return;
-        }
+        const overrideLink = typeof options === 'object' ? options.link : undefined;
 
-        const storedLink = elem.dataset?.link;
-        let link = storedLink;
-        if (!link) {
-          if (typeof elem.value === 'string') {
+        let link = overrideLink;
+        if (!link && elem) {
+          const storedLink = elem.dataset?.link;
+          if (storedLink) {
+            link = storedLink;
+          } else if (typeof elem.value === 'string') {
             link = elem.value;
-          } else {
+          } else if (typeof elem.textContent === 'string') {
             link = elem.textContent;
           }
         }
@@ -1844,6 +2612,14 @@ This invite can be used only once. Share the link privately.`;
         }
 
         const success = await this.copyText(link);
+
+        if (!elem) {
+          if (!success) {
+            this.showToast('Copy failed. Select the link manually.', 'warning');
+          }
+          return;
+        }
+
         const originalValue = typeof elem.value === 'string' ? elem.value : elem.textContent;
         if (success) {
           if (typeof elem.value === 'string') {
@@ -1954,9 +2730,11 @@ This invite can be used only once. Share the link privately.`;
       showWelcome() {
         this.showScreen('welcomeScreen');
         this.renderRoomHistory(projection.roomList());
+        this.updateQuickJoinBanner(this.detectedClipboardInvite);
+        this.checkClipboardForInvite().catch(() => {});
       }
 
-      showHost() {
+      prepareHostRoom() {
         CryptoManager.reset();
         this.latestFingerprint = '';
         this.lastAnnouncedEpoch = -1;
@@ -1966,6 +2744,7 @@ This invite can be used only once. Share the link privately.`;
         this.resetMessageCounters();
         this.pendingRoomSalt = null;
         this.currentInvite = null;
+        this.inviteCodeSegments = [];
         this.seats = { host: null, guest: null };
         this.resetIdentityState();
         this.updateFingerprintDisplay(null);
@@ -1980,7 +2759,18 @@ This invite can be used only once. Share the link privately.`;
         this.updateInviteLink('');
         this.currentShareLink = '';
         this.setWaitingBanner(false, '');
-        this.showScreen('hostScreen');
+        this.hideShareOverlay();
+        this.shareOverlayVisible = false;
+        this.shareOverlayMinimized = false;
+      }
+
+      showHost() {
+        this.prepareHostRoom();
+        this.startHost();
+      }
+
+      instantCreate() {
+        this.showHost();
       }
 
       showJoin(statusMessage = 'Secure invite required', detailMessage = 'Open the one-time invite link shared with you to join.') {
@@ -1996,6 +2786,11 @@ This invite can be used only once. Share the link privately.`;
         if (DOM.joinStatusDetail) {
           DOM.joinStatusDetail.textContent = detailMessage;
         }
+        this.hideJoiningOverlay();
+        this.resetJoinInputs();
+        this.setActiveJoinTab('link');
+        this.validateJoinLink();
+        this.validateJoinCode();
         this.showScreen('joinScreen');
       }
 
@@ -2616,6 +3411,7 @@ This invite can be used only once. Share the link privately.`;
         this.updateSimpleShareStatus('');
         this.setWaitingBanner(true, shareLink, 'Share this one-time secure link with your guest.');
         this.showChat();
+        this.renderShareOverlay({ autoShow: true });
 
         initPeer(this, this.roomId);
       }
@@ -3585,6 +4381,8 @@ Current Key: ${CryptoManager.getCurrentKey() ? 'Loaded ✓' : 'Not set ✗'}</pr
         this.updateInviteLink('');
         this.updateSimpleShareStatus('');
         this.updateFingerprintDisplay(null);
+        this.hideShareOverlay();
+        this.closeShareConfirmation();
 
         if (this.conn) this.conn.close();
         if (this.peer) this.peer.destroy();

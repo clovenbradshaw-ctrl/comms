@@ -39,39 +39,40 @@
 
     <!-- Welcome Screen -->
     <div id="welcomeScreen" class="screen active">
-      <div class="welcome">
-        <div class="welcome-card">
-          <h1>Secure P2P Chat</h1>
-          <p>End-to-end encrypted messaging with no servers. Your messages stay on your device.</p>
+      <div class="welcome-screen">
+        <div class="welcome-content">
+          <h1>Secure Chat</h1>
+          <p>End-to-end encrypted • No servers • No signups</p>
 
-          <div class="features">
-            <div class="feature">
-              <div class="feature-icon">🔐</div>
-              <div class="feature-text">E2E Encrypted</div>
-            </div>
-            <div class="feature">
-              <div class="feature-icon">🌐</div>
-              <div class="feature-text">No Servers</div>
-            </div>
-            <div class="feature">
-              <div class="feature-icon">💾</div>
-              <div class="feature-text">Local Storage</div>
-            </div>
-          </div>
-
-          <div class="action-buttons">
-            <button class="btn btn-primary" onclick="App.showHost()">
-              <span>🏠</span>
-              <span>Create Room</span>
+          <div class="main-actions">
+            <button class="action-card create" onclick="App.instantCreate()">
+              <div class="card-icon">🏠</div>
+              <div class="card-content">
+                <h3>Start a Room</h3>
+                <p>Create instantly, share with anyone</p>
+              </div>
+              <div class="card-arrow">→</div>
             </button>
-            <button class="btn btn-secondary" onclick="App.showJoin()">
-              <span>🔗</span>
-              <span>Join Room</span>
+
+            <button class="action-card join" onclick="App.showJoin()">
+              <div class="card-icon">🔗</div>
+              <div class="card-content">
+                <h3>Join a Room</h3>
+                <p>Enter code or paste invite link</p>
+              </div>
+              <div class="card-arrow">→</div>
             </button>
           </div>
 
-          <!-- Room History -->
-          <div id="roomHistory" class="room-history" style="display:none;">
+          <div id="quickJoin" class="quick-join" style="display: none;">
+            <div class="quick-join-content">
+              <span class="icon">⚡</span>
+              <span>Invite link detected!</span>
+              <button id="quickJoinBtn" type="button">Join Now</button>
+            </div>
+          </div>
+
+          <div id="roomHistory" class="recent-rooms" style="display: none;">
             <div class="history-title">Recent Rooms</div>
             <div id="historyItems" class="history-items"></div>
           </div>
@@ -79,70 +80,70 @@
       </div>
     </div>
 
-    <!-- Host Setup Screen -->
-    <div id="hostScreen" class="screen">
-      <div class="setup-screen">
-        <div class="setup-card">
-          <h2>Create Secure Room</h2>
-          <p style="color: var(--text-secondary); text-align: center; margin-bottom: 1rem;">Share this room code with someone you trust</p>
-          
-          <div class="room-code-display" id="roomCode" onclick="App.copyRoomCode()" role="button" tabindex="0" aria-label="Copy room code">
-            Loading...
+    <!-- Host Setup Screen (legacy container retained for compatibility) -->
+    <div id="hostScreen" class="screen" hidden aria-hidden="true"></div>
+
+    <!-- Join Setup Screen -->
+    <div id="joinScreen" class="screen">
+      <div class="join-screen">
+        <div class="join-card">
+          <h2>Join a Room</h2>
+
+          <div class="join-tabs" role="tablist">
+            <button class="tab active" data-join-tab="link" role="tab" aria-selected="true">
+              <span>🔗</span> Link
+            </button>
+            <button class="tab" data-join-tab="code" role="tab" aria-selected="false">
+              <span>#</span> Room Code
+            </button>
           </div>
-          
-          <button class="btn btn-primary" style="width: 100%;" onclick="App.startHost()">
-            Generate Secure Invite
-          </button>
 
-          <div id="shareSection" class="share-section" style="display: none;">
-            <div class="invite-section" id="inviteSection">
-              <h3>🎟️ Secure One-Time Invite</h3>
-              <p>This link works only once and expires in 15 minutes.</p>
+          <div class="tab-content active" data-join-content="link">
+            <label for="joinLinkInput">Paste invite link</label>
+            <input
+              type="url"
+              id="joinLinkInput"
+              placeholder="https://app.com/#/j/..."
+              autocomplete="off"
+            />
+            <button class="btn-primary" id="joinBtn" type="button" disabled>
+              Join Room
+            </button>
+          </div>
 
-              <div class="invite-link-container">
-                <input id="inviteLink" class="invite-input" readonly value="Generating secure link..." aria-live="polite">
-                <button id="copyInviteBtn" class="btn btn-primary">📋 Copy Secure Link</button>
-              </div>
-
-              <div class="security-info">
-                ✅ No passwords needed<br>
-                ✅ Single-use only<br>
-                ✅ Auto-expires<br>
-                ✅ Cryptographically secure
-              </div>
-
-              <div class="simple-setup">
-                <label class="input-label" for="simpleEmail">Simple setup (optional)</label>
-                <input type="email" id="simpleEmail" class="input-field" placeholder="Invite email (leave blank to use device share)">
-                <button class="btn btn-secondary" style="width: 100%;" onclick="App.simpleShareInvite()">✨ Simple Setup: Share Invite</button>
-                <div id="simpleShareStatus" class="simple-status"></div>
-              </div>
+          <div class="tab-content" data-join-content="code">
+            <label>Enter room code</label>
+            <div class="code-input-group">
+              <input type="text" id="codeWord1" data-code-input placeholder="WORD" maxlength="16" autocomplete="off" />
+              <span class="separator">-</span>
+              <input type="text" id="codeWord2" data-code-input placeholder="WORD" maxlength="16" autocomplete="off" />
+              <span class="separator">-</span>
+              <input type="text" id="codeWord3" data-code-input placeholder="WORD" maxlength="16" autocomplete="off" />
             </div>
+            <button class="btn-primary" id="joinCodeBtn" type="button" disabled>
+              Join Room
+            </button>
           </div>
-          
+
+          <div class="join-help">
+            <p>Don't have an invite?</p>
+            <button class="btn-text" type="button" onclick="App.instantCreate()">
+              Create your own room
+            </button>
+          </div>
+
           <button class="btn btn-secondary" style="width: 100%; margin-top: 1rem;" onclick="App.showWelcome()">
             Back
           </button>
         </div>
-      </div>
-    </div>
 
-    <!-- Join Setup Screen -->
-    <div id="joinScreen" class="screen">
-      <div class="setup-screen">
-        <div class="setup-card">
-          <h2>Join Secure Room</h2>
-          <p style="color: var(--text-secondary); text-align: center; margin-bottom: 1rem;">Use the secure invite link sent to you</p>
-
-          <div class="joining-status">
-            <div class="spinner" id="joinSpinner"></div>
-            <p id="joinStatus" tabindex="-1">Claiming your secure seat...</p>
-            <p class="small" id="joinStatusDetail">Verifying one-time token...</p>
+        <div class="joining-overlay" id="joiningOverlay" style="display: none;">
+          <div class="joining-card">
+            <div class="spinner"></div>
+            <h3>Joining room...</h3>
+            <p id="joinStatus">Verifying invite...</p>
+            <p id="joinStatusDetail" class="small"></p>
           </div>
-          
-          <button class="btn btn-secondary" style="width: 100%; margin-top: 1rem;" onclick="App.showWelcome()">
-            Back
-          </button>
         </div>
       </div>
     </div>
@@ -208,6 +209,14 @@
         </div>
         <aside id="memberSidebar" class="members-sidebar" aria-label="Room members"></aside>
       </div>
+
+      <div id="shareOverlayContainer"></div>
+      <div id="shareConfirmationContainer"></div>
+      <button class="floating-share-btn" id="floatingShare" type="button" aria-label="Invite participants" hidden>
+        <span class="icon">👥</span>
+        <span class="label">Invite</span>
+        <span class="badge">1</span>
+      </button>
 
       <div id="identityModal" class="identity-modal" role="dialog" aria-modal="true" aria-labelledby="identityModalTitle" hidden>
         <div class="identity-dialog">
