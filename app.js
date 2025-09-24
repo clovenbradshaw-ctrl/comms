@@ -30,6 +30,7 @@ const DOM = {
   encryptedToggle: document.getElementById('encryptedToggle'),
   schemaToggle: document.getElementById('schemaToggle'),
   systemAnnouncements: document.getElementById('systemAnnouncements'),
+  typingIndicator: document.getElementById('typingIndicator'),
   memberSidebar: document.getElementById('memberSidebar'),
   identityModal: document.getElementById('identityModal'),
   identityCreateForm: document.getElementById('identityCreateForm'),
@@ -387,6 +388,15 @@ class MessageTimeline {
     this.messagesContainer = container;
   }
 
+  normalizeAvatar(avatar) {
+    if (!avatar || typeof avatar !== 'object') {
+      return { emoji: '🙂', color: '#4A9FD5' };
+    }
+    const emoji = typeof avatar.emoji === 'string' ? avatar.emoji : '🙂';
+    const color = typeof avatar.color === 'string' ? avatar.color : '#4A9FD5';
+    return { emoji, color };
+  }
+
   isNearBottom() {
     const container = this.messagesContainer;
     if (!container) {
@@ -412,6 +422,10 @@ class MessageTimeline {
       const messageText = typeof msg.text === 'string'
         ? msg.text
         : (typeof msg.content === 'string' ? msg.content : '');
+      const senderName = typeof msg.displayName === 'string'
+        ? msg.displayName
+        : (msg.type === 'me' ? 'You' : 'Guest');
+      const avatar = this.normalizeAvatar(msg.avatar);
       return {
         id: msg.id,
         text: messageText,
@@ -431,7 +445,16 @@ class MessageTimeline {
         originalPosition: Number.isFinite(msg.originalPosition) ? msg.originalPosition : null,
         isOutOfOrder: Boolean(msg.isOutOfOrder),
         sequence: Number.isFinite(msg.sequence) ? msg.sequence : null,
-        editedAt: Number.isFinite(msg.editedAt) ? msg.editedAt : null
+        editedAt: Number.isFinite(msg.editedAt) ? msg.editedAt : null,
+        userId: msg.userId || null,
+        displayName: senderName,
+        avatar,
+        sender: {
+          id: msg.userId || null,
+          displayName: senderName,
+          avatar
+        },
+        isLocal: msg.type === 'me'
       };
     });
 
@@ -589,6 +612,16 @@ class SecureChat {
         this.highestIncomingSequence = 0;
         this.totalReceivedMessages = 0;
         this.reorderNoticeTimers = new Map();
+        this.typingUsers = new Map();
+        this.typingTimeouts = new Map();
+        this.lastTypingState = false;
+        this.lastTypingSentAt = 0;
+        this.typingResetTimer = null;
+        this.typingIndicator = DOM.typingIndicator || null;
+        if (this.typingIndicator) {
+          this.typingIndicator.innerHTML = '';
+          this.typingIndicator.setAttribute('hidden', '');
+        }
 
         this.dom = DOM;
         this.applyVisualConfig();
@@ -618,6 +651,8 @@ class SecureChat {
           input.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') this.sendMessage();
           });
+          input.addEventListener('input', () => this.handleTypingActivity());
+          input.addEventListener('blur', () => this.stopTypingActivity());
         }
 
         const sendBtn = DOM.sendBtn;
@@ -1379,6 +1414,15 @@ class SecureChat {
           verified: identity.verified,
           lastSeen: Date.now()
         });
+
+        if (identity.id && this.typingUsers?.has(identity.id)) {
+          const entry = this.typingUsers.get(identity.id);
+          if (entry) {
+            entry.displayName = identity.displayName;
+            entry.avatar = identity.avatar;
+            this.renderTypingIndicator(Array.from(this.typingUsers.values()));
+          }
+        }
       }
 
       normalizeAvatar(avatar) {
@@ -2510,11 +2554,17 @@ This invite can be used only once. Share the link privately.`;
           return true;
         }
 
+        if (message.type === 'typing_state') {
+          this.handleTypingControl(message);
+          return true;
+        }
+
         return false;
       }
 
       handleDisconnect() {
         this.stopHeartbeat();
+        this.clearTypingState();
         if (this.conn) {
           try {
             this.conn.close();
@@ -2777,11 +2827,14 @@ This invite can be used only once. Share the link privately.`;
         }
 
         input.value = '';
+        this.stopTypingActivity();
         const sentAtLocal = this.getMonotonicTime();
 
         const sequenceNumber = this.outgoingMessageNumber;
         const routePath = this.getDefaultRoutePath('me');
         const hopCount = Math.max(routePath.length - 1, 1);
+        const localDisplayName = this.localIdentity?.displayName || 'You';
+        const localAvatar = this.normalizeAvatar(this.localIdentity?.avatar || this.computeAvatarFromName(localDisplayName));
 
         const envelope = {
           kind: 'data',
@@ -2828,7 +2881,9 @@ This invite can be used only once. Share the link privately.`;
               vectorClock: this.buildVectorClock(sequenceNumber, this.localIdentity?.id || this.localUserId),
               sequence: sequenceNumber,
               originalPosition: null,
-              isOutOfOrder: false
+              isOutOfOrder: false,
+              displayName: localDisplayName,
+              avatar: localAvatar
             },
             this.localUserId,
             [`room:${this.roomId}`, `msg:${messageId}`]
@@ -2875,6 +2930,7 @@ This invite can be used only once. Share the link privately.`;
         if (this.systemAnnouncements) {
           this.systemAnnouncements.textContent = '';
         }
+        this.clearTypingState();
         this.renderChatMessages([]);
       }
 
@@ -2942,64 +2998,464 @@ This invite can be used only once. Share the link privately.`;
           this.messageDetailCache.set(entry.id, { ...entry });
         });
 
+        const fragment = document.createDocumentFragment();
+        let lastMessageEntry = null;
+
         combined.forEach((entry) => {
           let element = null;
 
           if (entry.kind === 'system') {
             element = this.createSystemMessageElement(entry);
           } else if (entry.kind === 'message') {
+            if (entry.sender?.id) {
+              this.clearTypingUser(entry.sender.id);
+            }
             if (this.showEncrypted) {
               element = entry.encrypted
                 ? this.createEncryptedMessageElement(entry)
                 : this.createEncryptedPlaceholderElement(entry);
             } else {
-              element = this.createPlainMessageElement(entry);
+              const needsBreak = !lastMessageEntry || this.shouldShowTimeBreak(lastMessageEntry, entry);
+              if (needsBreak) {
+                fragment.appendChild(this.createTimeBreakElement(entry.displayAt ?? entry.at ?? Date.now()));
+              }
+              element = this.createPlainMessageElement(entry, lastMessageEntry);
+              lastMessageEntry = entry;
             }
           }
 
           if (element) {
-            container.appendChild(element);
+            fragment.appendChild(element);
           }
         });
+
+        container.appendChild(fragment);
 
         if (shouldStick) {
           container.scrollTop = container.scrollHeight;
         }
       }
 
-      createPlainMessageElement(entry) {
+      createPlainMessageElement(entry, previousEntry = null) {
         const { text, type, displayAt } = entry;
-        const message = document.createElement('div');
-        message.className = `message ${type}`;
+        const isLocal = type === 'me';
+        const sender = entry.sender || { id: entry.userId, displayName: entry.displayName, avatar: entry.avatar };
+        const name = sender?.displayName || (isLocal ? 'You' : 'Guest');
+        const shownTime = Number.isFinite(displayAt) ? displayAt : Date.now();
+        const previousSameSender = previousEntry && previousEntry.sender?.id && sender?.id
+          ? previousEntry.sender.id === sender.id
+          : previousEntry?.type === type;
+        const isNewTimeBlock = previousEntry ? this.shouldShowTimeBreak(previousEntry, entry) : true;
+        const isConsecutive = Boolean(previousEntry) && previousSameSender && !isNewTimeBlock;
+        const showAvatarHeader = !isLocal && (!isConsecutive || isNewTimeBlock);
 
-        const content = document.createElement('div');
-        content.className = 'message-content';
+        const message = document.createElement('div');
+        message.className = `message ${isLocal ? 'local' : 'remote'}`;
+        if (sender?.id) {
+          message.dataset.sender = sender.id;
+        }
+        message.dataset.consecutive = isConsecutive ? 'true' : 'false';
+
+        const palette = this.getAvatarPalette(sender);
+        if (palette) {
+          message.style.setProperty('--avatar-color-1', palette.primary);
+          message.style.setProperty('--avatar-color-2', palette.secondary);
+        }
+
+        if (showAvatarHeader) {
+          const header = document.createElement('div');
+          header.className = 'sender-header';
+
+          const avatarEl = document.createElement('div');
+          avatarEl.className = 'sender-avatar';
+          avatarEl.textContent = sender?.avatar?.emoji || '🙂';
+          header.appendChild(avatarEl);
+
+          const nameSpan = document.createElement('span');
+          nameSpan.className = 'sender-name';
+          nameSpan.textContent = name;
+          header.appendChild(nameSpan);
+
+          const timeSpan = document.createElement('span');
+          timeSpan.className = 'sender-time';
+          timeSpan.textContent = this.formatTimestamp(shownTime);
+          header.appendChild(timeSpan);
+
+          message.appendChild(header);
+        }
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'message-content-wrapper';
+
+        if (!isLocal && isConsecutive) {
+          const tooltip = document.createElement('span');
+          tooltip.className = 'sender-tooltip';
+          tooltip.textContent = name;
+          wrapper.appendChild(tooltip);
+        }
+
+        const bubble = document.createElement('div');
+        bubble.className = 'message-bubble';
 
         const textEl = document.createElement('div');
         textEl.className = 'message-text';
         textEl.textContent = text;
+        bubble.appendChild(textEl);
 
         const meta = document.createElement('div');
-        meta.className = 'message-time message-meta';
+        meta.className = 'message-meta';
+
+        if (isLocal) {
+          const status = document.createElement('span');
+          status.className = 'delivery-status';
+          status.textContent = this.getDeliveryStatusIcon(entry.state);
+          status.setAttribute('aria-label', `Message ${entry.state || 'sent'}`);
+          meta.appendChild(status);
+        }
 
         const timestamp = document.createElement('span');
         timestamp.className = 'timestamp';
-        const shownTime = Number.isFinite(displayAt) ? displayAt : Date.now();
-        timestamp.textContent = this.formatTimestamp(shownTime);
-
-        const stateDots = document.createElement('span');
-        stateDots.className = 'state-dots';
-        stateDots.textContent = this.getMessageStateDots(entry.state);
-        stateDots.setAttribute('aria-label', `Message ${entry.state || 'settled'}`);
-
+        timestamp.textContent = this.formatCompactTime(shownTime);
         meta.appendChild(timestamp);
-        meta.appendChild(stateDots);
 
-        content.appendChild(textEl);
-        content.appendChild(meta);
-        message.appendChild(content);
+        bubble.appendChild(meta);
+        wrapper.appendChild(bubble);
+        message.appendChild(wrapper);
 
         return this.applyMessageMetadata(message, entry);
+      }
+
+      createTimeBreakElement(timestamp) {
+        const when = Number.isFinite(timestamp) ? timestamp : Date.now();
+        const wrapper = document.createElement('div');
+        wrapper.className = 'time-break';
+
+        const lineBefore = document.createElement('span');
+        lineBefore.className = 'time-break-line';
+
+        const text = document.createElement('span');
+        text.className = 'time-break-text';
+        text.textContent = this.formatTimeBreak(when);
+
+        const lineAfter = document.createElement('span');
+        lineAfter.className = 'time-break-line';
+
+        wrapper.appendChild(lineBefore);
+        wrapper.appendChild(text);
+        wrapper.appendChild(lineAfter);
+
+        return wrapper;
+      }
+
+      formatCompactTime(timestamp) {
+        const value = Number.isFinite(timestamp) ? timestamp : Date.now();
+        const now = Date.now();
+        const diff = now - value;
+
+        if (diff < 60000) {
+          return 'now';
+        }
+
+        if (diff < 3600000) {
+          const mins = Math.max(1, Math.floor(diff / 60000));
+          return `${mins}m`;
+        }
+
+        const messageDate = new Date(value);
+        const today = new Date();
+
+        if (messageDate.toDateString() === today.toDateString()) {
+          return messageDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        }
+
+        const weekAgo = new Date();
+        weekAgo.setDate(weekAgo.getDate() - 7);
+        if (messageDate >= weekAgo) {
+          return messageDate.toLocaleDateString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+        }
+
+        return messageDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
+      }
+
+      formatTimeBreak(timestamp) {
+        const value = Number.isFinite(timestamp) ? timestamp : Date.now();
+        const date = new Date(value);
+        const now = new Date();
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const startOfYesterday = new Date(startOfToday);
+        startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+
+        if (date >= startOfToday) {
+          return `Today, ${date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+        }
+
+        if (date >= startOfYesterday) {
+          return `Yesterday, ${date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+        }
+
+        return date.toLocaleDateString([], {
+          weekday: 'long',
+          month: 'long',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit'
+        });
+      }
+
+      shouldShowTimeBreak(previousEntry, nextEntry) {
+        if (!previousEntry) {
+          return true;
+        }
+        if (!nextEntry) {
+          return false;
+        }
+        const prevTime = Number.isFinite(previousEntry.displayAt)
+          ? previousEntry.displayAt
+          : Number.isFinite(previousEntry.at) ? previousEntry.at : 0;
+        const nextTime = Number.isFinite(nextEntry.displayAt)
+          ? nextEntry.displayAt
+          : Number.isFinite(nextEntry.at) ? nextEntry.at : 0;
+
+        if (!Number.isFinite(prevTime) || !Number.isFinite(nextTime)) {
+          return false;
+        }
+
+        const diff = Math.abs(nextTime - prevTime);
+        if (diff > 300000) {
+          return true;
+        }
+
+        const prevDate = new Date(prevTime);
+        const nextDate = new Date(nextTime);
+        return prevDate.toDateString() !== nextDate.toDateString();
+      }
+
+      getDeliveryStatusIcon(state) {
+        switch (state) {
+          case 'sending':
+            return '…';
+          case 'propagating':
+            return '⇆';
+          case 'settling':
+            return '⌛';
+          case 'failed':
+            return '⚠';
+          case 'settled':
+          default:
+            return '✓✓';
+        }
+      }
+
+      getAvatarPalette(source) {
+        const baseColor = source?.avatar?.color || source?.color || '#4A9FD5';
+        const sanitized = typeof baseColor === 'string' && /^#([0-9a-f]{6})$/i.test(baseColor)
+          ? baseColor
+          : '#4A9FD5';
+        return {
+          primary: this.adjustColor(sanitized, 1.15),
+          secondary: this.adjustColor(sanitized, 0.85)
+        };
+      }
+
+      adjustColor(hex, factor) {
+        if (typeof hex !== 'string') {
+          return '#4A9FD5';
+        }
+        const normalized = hex.replace('#', '');
+        if (!/^[0-9a-f]{6}$/i.test(normalized)) {
+          return '#4A9FD5';
+        }
+        const r = parseInt(normalized.slice(0, 2), 16);
+        const g = parseInt(normalized.slice(2, 4), 16);
+        const b = parseInt(normalized.slice(4, 6), 16);
+        const adjust = (channel) => Math.min(255, Math.max(0, Math.round(channel * factor)));
+        return `#${this.toHexComponent(adjust(r))}${this.toHexComponent(adjust(g))}${this.toHexComponent(adjust(b))}`;
+      }
+
+      toHexComponent(value) {
+        const clamped = Math.min(255, Math.max(0, Math.round(value)));
+        return clamped.toString(16).padStart(2, '0');
+      }
+
+      handleTypingActivity() {
+        const input = DOM.messageInput;
+        if (!input) {
+          return;
+        }
+        const isActive = Boolean(input.value && input.value.trim().length > 0);
+        this.setLocalTyping(isActive);
+      }
+
+      stopTypingActivity() {
+        this.setLocalTyping(false);
+      }
+
+      setLocalTyping(active) {
+        const normalized = Boolean(active);
+        const now = Date.now();
+
+        if (normalized) {
+          if (this.typingResetTimer) {
+            clearTimeout(this.typingResetTimer);
+          }
+          this.typingResetTimer = setTimeout(() => this.setLocalTyping(false), 4000);
+          const shouldSend = !this.lastTypingState || (now - this.lastTypingSentAt > 2000);
+          this.lastTypingState = true;
+          if (shouldSend) {
+            this.lastTypingSentAt = now;
+            this.announceTypingState(true);
+          }
+        } else {
+          if (this.typingResetTimer) {
+            clearTimeout(this.typingResetTimer);
+            this.typingResetTimer = null;
+          }
+          if (this.lastTypingState) {
+            this.lastTypingState = false;
+            this.lastTypingSentAt = now;
+            this.announceTypingState(false);
+          }
+        }
+      }
+
+      async announceTypingState(active) {
+        if (!this.conn || !CryptoManager.getCurrentKey()) {
+          return;
+        }
+
+        const profile = this.localIdentity || {};
+        const displayName = profile.displayName || 'You';
+        const avatar = this.normalizeAvatar(profile.avatar || this.computeAvatarFromName(displayName));
+        const userId = profile.id || this.localUserId;
+
+        await this.sendSecureControlMessage({
+          type: 'typing_state',
+          active: Boolean(active),
+          userId,
+          displayName,
+          avatar,
+          timestamp: Date.now()
+        });
+      }
+
+      handleTypingControl(message) {
+        if (!message || typeof message !== 'object') {
+          return;
+        }
+
+        const userId = message.userId || this.remoteIdentity?.id || this.remoteUserId;
+        if (!userId) {
+          return;
+        }
+        if (userId === this.localUserId || (this.localIdentity && userId === this.localIdentity.id)) {
+          return;
+        }
+
+        if (!this.typingUsers) {
+          this.typingUsers = new Map();
+        }
+        if (!this.typingTimeouts) {
+          this.typingTimeouts = new Map();
+        }
+
+        const isActive = Boolean(message.active);
+        if (isActive) {
+          const displayName = typeof message.displayName === 'string'
+            ? message.displayName
+            : (this.remoteIdentity?.displayName || 'Guest');
+          const avatar = this.normalizeAvatar(message.avatar || this.remoteIdentity?.avatar);
+          if (this.typingTimeouts.has(userId)) {
+            clearTimeout(this.typingTimeouts.get(userId));
+            this.typingTimeouts.delete(userId);
+          }
+          this.typingUsers.set(userId, {
+            id: userId,
+            displayName,
+            avatar
+          });
+          const timeout = setTimeout(() => this.clearTypingUser(userId), 5000);
+          this.typingTimeouts.set(userId, timeout);
+          this.renderTypingIndicator(Array.from(this.typingUsers.values()));
+        } else {
+          this.clearTypingUser(userId);
+        }
+      }
+
+      clearTypingUser(userId) {
+        if (!userId || !this.typingUsers) {
+          return;
+        }
+        if (this.typingTimeouts?.has(userId)) {
+          clearTimeout(this.typingTimeouts.get(userId));
+          this.typingTimeouts.delete(userId);
+        }
+        const removed = this.typingUsers.delete(userId);
+        if (removed) {
+          this.renderTypingIndicator(Array.from(this.typingUsers.values()));
+        }
+      }
+
+      clearTypingState() {
+        if (this.typingResetTimer) {
+          clearTimeout(this.typingResetTimer);
+          this.typingResetTimer = null;
+        }
+        if (this.typingTimeouts) {
+          for (const timeout of this.typingTimeouts.values()) {
+            clearTimeout(timeout);
+          }
+          this.typingTimeouts.clear();
+        }
+        this.typingUsers?.clear?.();
+        this.lastTypingState = false;
+        this.lastTypingSentAt = 0;
+        this.renderTypingIndicator([]);
+      }
+
+      getTypingIndicatorText(users) {
+        if (!Array.isArray(users) || users.length === 0) {
+          return 'Someone is typing';
+        }
+        const names = users
+          .map((user) => (typeof user.displayName === 'string' && user.displayName.trim() ? user.displayName.trim() : 'Someone'));
+        if (names.length === 1) {
+          return `${names[0]} is typing`;
+        }
+        if (names.length === 2) {
+          return `${names[0]} and ${names[1]} are typing`;
+        }
+        return `${names.length} people are typing`;
+      }
+
+      renderTypingIndicator(users) {
+        const indicator = this.typingIndicator || DOM.typingIndicator;
+        if (!indicator) {
+          return;
+        }
+
+        const list = Array.isArray(users) ? users.filter(Boolean) : [];
+        if (list.length === 0) {
+          indicator.innerHTML = '';
+          indicator.setAttribute('hidden', '');
+          return;
+        }
+
+        const limited = list.slice(0, 3);
+        const avatarHtml = limited.map((user) => {
+          const palette = this.getAvatarPalette(user);
+          const emoji = typeof user?.avatar?.emoji === 'string' && user.avatar.emoji.trim()
+            ? user.avatar.emoji
+            : '🙂';
+          return `<span class="typing-avatar" style="--avatar-color-1:${palette.primary}; --avatar-color-2:${palette.secondary};">${this.escapeHtml(emoji)}</span>`;
+        }).join('');
+
+        const text = this.getTypingIndicatorText(list);
+        indicator.innerHTML = `
+          <div class="typing-avatars">${avatarHtml}</div>
+          <div class="typing-text">${this.escapeHtml(text)}</div>
+          <div class="typing-dots"><span></span><span></span><span></span></div>
+        `;
+        indicator.removeAttribute('hidden');
       }
 
       getMessageStateDots(state) {
