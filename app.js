@@ -1193,6 +1193,7 @@ Password: [share securely via a different channel]
         this.sentKeyExchange = false;
         CryptoManager.clearECDHKeyPair();
         this.resetMessageCounters();
+        this.resetConversationState();
         this.updateStatus('Creating room...', 'connecting');
 
         // Generate and display the share link
@@ -1246,6 +1247,7 @@ Password: [share securely via a different channel]
         this.roomId = roomId;
         this.isHost = false;
         this.currentShareLink = '';
+        this.resetConversationState();
         CryptoManager.setRoomSalt(saltBytes);
         this.roomSalt = CryptoManager.getRoomSalt();
         this.roomSaltBase64 = this.bytesToBase64(this.roomSalt);
@@ -1409,6 +1411,18 @@ Password: [share securely via a different channel]
           toggle.setAttribute('aria-pressed', this.showEncrypted ? 'true' : 'false');
         }
         this.renderChatMessages();
+      }
+
+      resetConversationState() {
+        this.currentMessages = [];
+        this.systemLog = [];
+        this.systemOrderCounter = 0;
+        this.encryptedCache = new Map();
+        this.lastEncryptedHex = '';
+        if (this.systemAnnouncements) {
+          this.systemAnnouncements.textContent = '';
+        }
+        this.renderChatMessages([]);
       }
 
       renderChatMessages(messages = this.currentMessages) {
@@ -2009,10 +2023,7 @@ Current Key: ${CryptoManager.getCurrentKey() ? 'Loaded ✓' : 'Not set ✗'}</pr
           this.messageSubscription = null;
         }
 
-        this.currentMessages = [];
-        this.systemLog = [];
-        this.encryptedCache = new Map();
-        this.renderChatMessages([]);
+        this.resetConversationState();
 
         this.setWaitingBanner(false, '', 'Share the invite link below to bring someone into this secure room.');
         this.currentShareLink = '';
