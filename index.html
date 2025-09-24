@@ -212,52 +212,96 @@
       <div id="identityModal" class="identity-modal" role="dialog" aria-modal="true" aria-labelledby="identityModalTitle" hidden>
         <div class="identity-dialog">
           <div class="identity-header">
-            <h3 id="identityModalTitle">Choose Your Identity</h3>
-            <p id="identityModalSubtitle">Secure your seat in this room</p>
+            <h3 id="identityModalTitle">Create Your Secure Identity</h3>
+            <p id="identityModalSubtitle">This identity works across all rooms on this device</p>
           </div>
 
-          <div id="identityModeCreate" class="identity-section">
-            <form id="identityCreateForm" novalidate>
-              <div class="identity-block">
-                <h4>Display Name</h4>
-                <p class="help-text">Pick a generated name or create your own</p>
-                <div id="identitySuggestions" class="name-suggestions"></div>
-                <div class="custom-name-option">
-                  <input type="text" id="identityNameInput" maxlength="30" placeholder="Or type your own…" autocomplete="off">
-                  <button type="button" id="identityRefreshBtn" class="refresh-btn">🎲 New suggestions</button>
+          <div id="identitySetupSection" class="identity-setup-flow">
+            <div class="setup-step">
+              <div class="step-icon">🔐</div>
+              <h4>Create Your Secure Identity</h4>
+              <p>This identity works across all rooms on this device.</p>
+            </div>
+
+            <form id="identitySetupForm" class="password-creation-form" novalidate>
+              <label class="form-label" for="identitySetupPassword">
+                Create your identity password
+                <span class="label-hint">You'll use this to unlock your identity</span>
+              </label>
+
+              <div class="password-input-group">
+                <input
+                  type="password"
+                  id="identitySetupPassword"
+                  placeholder="Choose a strong password"
+                  autocomplete="new-password"
+                  required
+                >
+                <button type="button" class="toggle-visibility" id="identityPasswordToggle" aria-label="Toggle password visibility">
+                  👁️
+                </button>
+              </div>
+
+              <div class="password-strength-meter">
+                <div class="strength-bar" id="identityStrengthBar" data-strength="0">
+                  <div class="strength-fill" id="identityStrengthFill"></div>
+                </div>
+                <span class="strength-text">Password strength: <span id="identityStrengthLabel">-</span></span>
+              </div>
+
+              <div class="password-requirements" id="identityRequirements">
+                <div class="requirement" data-requirement="length">
+                  <span class="check">○</span> At least 12 characters
+                </div>
+                <div class="requirement" data-requirement="mix">
+                  <span class="check">○</span> Mix of letters and numbers
+                </div>
+                <div class="requirement" data-requirement="special">
+                  <span class="check">○</span> At least one special character
                 </div>
               </div>
 
-              <div class="identity-block">
-                <h4>Password</h4>
-                <p class="help-text">Create a password to rejoin this room later</p>
-                <div class="password-input-group">
-                  <input type="password" id="identityPasswordInput" placeholder="Create room password" autocomplete="new-password" required>
-                  <div class="password-strength">
-                    <div id="identityStrengthBar" class="strength-bar" data-strength="0"></div>
-                    <span id="identityStrengthText" class="strength-text">Choose a strong password</span>
-                  </div>
-                </div>
-              </div>
+              <label class="form-label" for="identitySetupConfirm">Confirm password</label>
+              <input
+                type="password"
+                id="identitySetupConfirm"
+                placeholder="Confirm password"
+                autocomplete="new-password"
+                required
+              >
 
-              <div class="identity-actions">
-                <button type="submit" class="btn btn-primary" id="identitySubmitBtn">Join Secure Room</button>
-              </div>
+              <button type="submit" class="btn btn-primary" id="identityCreateBtn" disabled>
+                Create Secure Identity
+              </button>
             </form>
+
+            <div class="recovery-setup">
+              <p class="info-text">
+                💡 After setup, you'll get a recovery phrase to restore your identity on other devices
+              </p>
+            </div>
           </div>
 
-          <div id="identityModeReturning" class="identity-section" hidden>
-            <form id="identityReturningForm" novalidate>
-              <div class="identity-block">
-                <h4>Welcome Back</h4>
-                <p class="help-text">Enter your password to rejoin as <strong id="identityHint">You</strong></p>
-                <input type="password" id="identityReturningPassword" placeholder="Enter your room password" autocomplete="current-password" required>
-              </div>
-              <div class="identity-actions">
-                <button type="submit" class="btn btn-primary">Rejoin Room</button>
-                <button type="button" class="btn btn-secondary" id="identityUseNew">Join as someone new</button>
-              </div>
+          <div id="identityUnlockSection" class="unlock-identity" hidden>
+            <div class="identity-card">
+              <div class="avatar" id="identityUnlockAvatar" aria-hidden="true">🙂</div>
+              <h3 id="identityUnlockName">You</h3>
+              <span class="identity-id" id="identityUnlockCreated"></span>
+            </div>
+
+            <form id="identityUnlockForm" class="unlock-form" novalidate>
+              <label for="identityUnlockPassword">Enter your identity password</label>
+              <input
+                type="password"
+                id="identityUnlockPassword"
+                placeholder="Your identity password"
+                autocomplete="current-password"
+                required
+              >
+              <button type="submit" class="btn btn-primary">Unlock &amp; Join Room</button>
             </form>
+
+            <button type="button" class="link-button" id="identityForgotBtn">Forgot password?</button>
           </div>
 
           <div id="identityError" class="identity-error" role="alert" aria-live="assertive" hidden></div>
