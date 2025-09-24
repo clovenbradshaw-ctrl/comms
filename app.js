@@ -3,11 +3,11 @@ const DOM = {
   sendBtn: document.getElementById('sendBtn'),
   simpleEmail: document.getElementById('simpleEmail'),
   simpleShareStatus: document.getElementById('simpleShareStatus'),
-  shareLink: document.getElementById('shareLink'),
-  hostPassword: document.getElementById('hostPassword'),
-  joinCode: document.getElementById('joinCode'),
-  joinPassword: document.getElementById('joinPassword'),
-  joinSalt: document.getElementById('joinSalt'),
+  inviteLink: document.getElementById('inviteLink'),
+  copyInviteBtn: document.getElementById('copyInviteBtn'),
+  inviteSection: document.getElementById('inviteSection'),
+  joinStatus: document.getElementById('joinStatus'),
+  joinStatusDetail: document.getElementById('joinStatusDetail'),
   waitingBanner: document.getElementById('waitingBanner'),
   chatShareLink: document.getElementById('chatShareLink'),
   waitingMessage: document.getElementById('waitingMessage'),
@@ -21,7 +21,6 @@ const DOM = {
   currentRoom: document.getElementById('currentRoom'),
   roomHistory: document.getElementById('roomHistory'),
   historyItems: document.getElementById('historyItems'),
-  roomSaltDisplay: document.getElementById('roomSaltDisplay'),
   fingerprintDisplay: document.getElementById('fingerprintDisplay'),
   fingerprintCode: document.getElementById('fingerprintCode'),
   statusText: document.getElementById('statusText'),
@@ -69,6 +68,8 @@ class SecureChat {
         this.pendingRoomSalt = null;
         this.isHost = false;
         this.currentShareLink = '';
+        this.currentInvite = null;
+        this.seats = { host: null, guest: null };
         this.localUserId = generateId('user-');
         this.remoteUserId = null;
         this.showEncrypted = false;
@@ -104,6 +105,9 @@ class SecureChat {
         this.handleSchemaRoute = null;
         this.lastMonotonicTime = 0;
         this.systemAnnouncements = DOM.systemAnnouncements;
+        this.inviteManager = typeof InviteManager === 'function' ? new InviteManager() : null;
+        this.inviteManagerReady = this.inviteManager?.ready || Promise.resolve();
+        this.pendingInvite = null;
         this.cryptoUpdates = CryptoManager.onUpdated((update) => {
           const fingerprint = update?.fingerprint || '';
           this.latestFingerprint = fingerprint;
@@ -128,7 +132,9 @@ class SecureChat {
         this.dom = DOM;
         this.initStorage();
         this.renderRoomHistory([]);
-        this.checkForSharedLink();
+        this.checkForSharedLink().catch((error) => {
+          console.error('Failed to process invite link.', error);
+        });
         this.initEventListeners();
         this.initSimpleSetup();
         this.updateStatus('Disconnected', '');
@@ -156,9 +162,12 @@ class SecureChat {
         }
 
         this.decorateInteractiveElement(DOM.roomCode, () => this.copyRoomCode());
-        this.decorateInteractiveElement(DOM.shareLink, () => this.copyShareLink());
-        this.decorateInteractiveElement(DOM.roomSaltDisplay, () => this.copyRoomSalt());
+        this.decorateInteractiveElement(DOM.inviteLink, () => this.copyShareLink('inviteLink'));
         this.decorateInteractiveElement(DOM.chatShareLink, () => this.copyShareLink('chatShareLink'));
+
+        if (DOM.copyInviteBtn) {
+          DOM.copyInviteBtn.addEventListener('click', () => this.copyShareLink('inviteLink'));
+        }
       }
 
       initSimpleSetup() {
@@ -228,9 +237,9 @@ class SecureChat {
         if (screenId === 'welcomeScreen') {
           focusTarget = DOM.welcomeScreen?.querySelector('.action-buttons button');
         } else if (screenId === 'hostScreen') {
-          focusTarget = DOM.hostPassword;
+          focusTarget = DOM.copyInviteBtn || DOM.inviteLink;
         } else if (screenId === 'joinScreen') {
-          focusTarget = DOM.joinCode;
+          focusTarget = DOM.joinStatus;
         } else if (screenId === 'chatScreen') {
           focusTarget = DOM.messageInput;
         }
@@ -377,17 +386,11 @@ class SecureChat {
       }
 
       simpleShareInvite() {
-        const shareLinkEl = DOM.shareLink;
-        const password = DOM.hostPassword?.value || '';
-        const link = this.currentShareLink || shareLinkEl?.dataset?.link || shareLinkEl?.textContent?.trim();
+        const shareLinkEl = DOM.inviteLink;
+        const link = this.currentShareLink || shareLinkEl?.dataset?.link || shareLinkEl?.value?.trim();
 
-        if (!link || link === 'Generating link...') {
-          this.updateSimpleShareStatus('Generate a link first by starting a secure room.', true);
-          return;
-        }
-
-        if (!password) {
-          this.updateSimpleShareStatus('Set an encryption password before sharing the invite.', true);
+        if (!link || link === 'Generating secure link...') {
+          this.updateSimpleShareStatus('Generate a secure invite by starting a room first.', true);
           return;
         }
 
@@ -397,15 +400,15 @@ class SecureChat {
           return;
         }
         this.storeInviteEmail(email || '');
-        const salt = this.roomSaltBase64 || '';
-        const roomCode = this.roomId || 'Check the app for the current room code';
-        const payload = `Join my secure room on Secure Chat.
+        const expiryText = this.seats?.guest?.expiresAt
+          ? new Date(this.seats.guest.expiresAt).toLocaleString()
+          : '15 minutes from creation';
+        const payload = `You're invited to a secure chat.
 
-Invite link: ${link}
-Room code: ${roomCode}
-Room salt: ${salt || 'Retrieve this from the app'}
-Password: [share securely via a different channel]
-`;
+One-time link: ${link}
+Expires: ${expiryText}
+
+This invite can be used only once. Share the link privately.`;
 
         this.updateSimpleShareStatus('');
 
@@ -434,140 +437,238 @@ Password: [share securely via a different channel]
         this.updateSimpleShareStatus('Share unsupported. Link copied to clipboard.', false);
       }
 
-      getInviteParamsFromUrl() {
+      async checkForSharedLink() {
         if (typeof window === 'undefined') {
-          return { room: null, salt: null };
+          return;
         }
 
-        const sources = [];
-        if (window.location.search) {
-          sources.push(new URLSearchParams(window.location.search));
-        }
+        const hash = window.location.hash || '';
+        let invitePayload = null;
 
-        const hash = window.location.hash;
-        if (hash && hash.length > 1 && hash.includes('=')) {
-          const normalizedHash = hash.startsWith('#') ? hash.slice(1) : hash;
-          sources.push(new URLSearchParams(normalizedHash));
-        }
-
-        let room = null;
-        let salt = null;
-
-        for (const params of sources) {
-          if (!room) {
-            const value = params.get('room');
-            if (value) {
-              room = value;
-            }
-          }
-
-          if (!salt) {
-            const value = params.get('salt');
-            if (value) {
-              salt = value;
-            }
-          }
-
-          if (room && salt) {
-            break;
+        if (hash.startsWith('#/j/')) {
+          const encoded = decodeURIComponent(hash.slice(4));
+          invitePayload = SecureInvite.decodePayload(encoded);
+        } else if (hash.startsWith('#/join/')) {
+          const parts = hash.replace(/^#\/+/, '').split('/');
+          if (parts.length >= 4) {
+            invitePayload = {
+              r: parts[1],
+              s: parts[2],
+              k: parts[3]
+            };
           }
         }
 
-        return { room, salt };
-      }
-
-      // Check URL parameters for shared link
-      checkForSharedLink() {
-        const { room, salt } = this.getInviteParamsFromUrl();
-        let inviteDetected = false;
-
-        if (room) {
-          const joinCode = DOM.joinCode;
-          if (joinCode) {
-            joinCode.value = room;
-          }
-          inviteDetected = true;
+        if (!invitePayload) {
+          return;
         }
 
-        let saltBytes = null;
-        if (typeof salt === 'string' && salt.trim()) {
-          saltBytes = this.base64ToBytes(salt);
+        const invite = {
+          roomId: invitePayload.roomId || invitePayload.r,
+          seatId: invitePayload.seatId || invitePayload.s,
+          secretKey: invitePayload.secretKey || invitePayload.k,
+          expiresAt: invitePayload.expiresAt || invitePayload.e,
+          signature: invitePayload.signature || invitePayload.sig
+        };
+
+        if (!invite.roomId || !invite.seatId || !invite.secretKey) {
+          console.warn('Invite link missing required parameters.');
+          return;
         }
 
-        if (!(saltBytes instanceof Uint8Array) && room) {
-          const storedSalt = this.loadStoredInviteSalt(room);
-          if (storedSalt) {
-            const decoded = this.base64ToBytes(storedSalt);
-            if (decoded instanceof Uint8Array) {
-              saltBytes = decoded;
-            }
+        if (!invite.signature) {
+          try {
+            invite.signature = await SecureInvite.signInvite(
+              invite.roomId,
+              invite.seatId,
+              invite.secretKey,
+              invite.expiresAt
+            );
+          } catch (error) {
+            console.warn('Unable to derive invite signature from payload.', error);
           }
         }
 
-        if (saltBytes instanceof Uint8Array) {
-          const joinSalt = DOM.joinSalt;
-          const saltBase64 = this.bytesToBase64(saltBytes);
-          this.pendingRoomSalt = saltBytes;
-          this.roomSaltBase64 = saltBase64;
-          if (joinSalt) {
-            joinSalt.value = saltBase64;
-          }
-          if (room) {
-            this.rememberInviteDetails(room, saltBase64);
-          }
-          inviteDetected = true;
-        } else if (salt && !saltBytes) {
-          console.warn('Invite link contained an invalid room salt. Waiting for manual input or a refreshed link.');
-        }
+        const detailMessage = invite.expiresAt
+          ? 'Verifying token and expiration...'
+          : 'Verifying one-time token...';
+        this.showJoin('Claiming your secure seat...', detailMessage);
 
-        if (inviteDetected) {
-          this.showJoin();
-          if (window.location.search || (window.location.hash && window.location.hash.includes('='))) {
+        try {
+          await this.startJoinFromInvite(invite);
+          if (window.history && window.location.hash) {
             window.history.replaceState({}, document.title, window.location.pathname);
           }
+        } catch (error) {
+          console.error('Failed to join using invite.', error);
+          const message = error?.message || 'Unable to use this invite link.';
+          this.showJoin('Invite unavailable', message);
+          this.updateStatus('Error', '');
         }
       }
 
-      // Generate shareable link
-      generateShareLink(roomId) {
-        const baseUrl = window.location.origin + window.location.pathname;
-        if (!roomId) {
-          return baseUrl;
+      async createInvitePayload(roomId, seat) {
+        if (!roomId || !seat?.seatId || !seat?.secretKey) {
+          return null;
         }
 
-        const params = new URLSearchParams();
-        params.set('room', roomId);
-        if (this.roomSaltBase64) {
-          params.set('salt', this.roomSaltBase64);
-        }
+        const expiresAt = seat.expiresAt || (Date.now() + 15 * 60 * 1000);
+        const signature = await SecureInvite.signInvite(roomId, seat.seatId, seat.secretKey, expiresAt);
+        const payload = {
+          roomId,
+          seatId: seat.seatId,
+          secretKey: seat.secretKey,
+          expiresAt,
+          signature
+        };
 
-        const query = params.toString();
-        return query ? `${baseUrl}?${query}` : baseUrl;
+        const encoded = SecureInvite.encodePayload({
+          r: payload.roomId,
+          s: payload.seatId,
+          k: payload.secretKey,
+          e: payload.expiresAt,
+          sig: payload.signature
+        });
+
+        const origin = window.location.origin + window.location.pathname;
+        const url = `${origin}#/j/${encoded}`;
+
+        return { payload, url, encoded };
       }
 
-      async copyShareLink(targetId = 'shareLink') {
+      async generateShareLink(roomId, seat = this.seats?.guest) {
+        const result = await this.createInvitePayload(roomId, seat);
+        if (!result) {
+          return window.location.origin + window.location.pathname;
+        }
+
+        this.currentInvite = result;
+        this.currentShareLink = result.url;
+        return result.url;
+      }
+
+      updateInviteLink(url) {
+        const inviteInput = DOM.inviteLink;
+        const shareSection = DOM.shareSection;
+
+        if (shareSection) {
+          shareSection.style.display = url ? 'block' : 'none';
+        }
+
+        if (!inviteInput) {
+          return;
+        }
+
+        if (url) {
+          inviteInput.value = url;
+          inviteInput.dataset.link = url;
+          inviteInput.setAttribute('aria-label', 'Copy secure invite link');
+        } else {
+          inviteInput.value = 'Generating secure link...';
+          delete inviteInput.dataset.link;
+        }
+      }
+
+      async refreshGuestInvite({ bannerMessage = 'Share this one-time secure link with your guest.', announce = false } = {}) {
+        if (!this.isHost || !this.roomId) {
+          return null;
+        }
+
+        let newSeat;
+        try {
+          newSeat = await SecureInvite.generateSeat();
+        } catch (error) {
+          console.error('Failed to generate replacement invite.', error);
+          this.addSystemMessage('⚠️ Unable to generate a new invite. Try restarting the room.');
+          return null;
+        }
+
+        const saltBytes = SecureInvite.fromBase64Url(newSeat.seatId);
+        if (!(saltBytes instanceof Uint8Array)) {
+          this.addSystemMessage('⚠️ Generated invite was invalid.');
+          return null;
+        }
+
+        try {
+          this.seats.guest = { ...newSeat, claimed: false };
+          CryptoManager.setRoomSalt(saltBytes);
+          this.roomSalt = CryptoManager.getRoomSalt();
+          this.roomSaltBase64 = this.bytesToBase64(this.roomSalt);
+          await CryptoManager.loadStaticKeyFromSeat(newSeat.secretKey, newSeat.seatId);
+        } catch (error) {
+          console.error('Failed to promote refreshed invite material.', error);
+          this.addSystemMessage('⚠️ Unable to activate the new invite. Try restarting the room.');
+          return null;
+        }
+
+        this.keyExchangeComplete = false;
+        this.sentKeyExchange = false;
+        CryptoManager.clearECDHKeyPair();
+        this.resetMessageCounters();
+        this.updateFingerprintDisplay(null);
+
+        let link = '';
+        try {
+          link = await this.generateShareLink(this.roomId, newSeat);
+        } catch (error) {
+          console.error('Failed to encode refreshed invite.', error);
+          this.addSystemMessage('⚠️ Unable to encode the new invite link.');
+          return null;
+        }
+
+        this.updateInviteLink(link);
+        this.updateSimpleShareStatus('');
+        this.setWaitingBanner(true, link, bannerMessage);
+        if (announce) {
+          this.addSystemMessage('✨ Generated a fresh secure invite link.');
+        }
+
+        return link;
+      }
+
+      async copyShareLink(targetId = 'inviteLink') {
         const elem = DOM[targetId] || document.getElementById(targetId);
         if (!elem) {
           return;
         }
 
         const storedLink = elem.dataset?.link;
-        const link = storedLink || elem.textContent;
+        let link = storedLink;
+        if (!link) {
+          if (typeof elem.value === 'string') {
+            link = elem.value;
+          } else {
+            link = elem.textContent;
+          }
+        }
 
         if (!link || link === 'Generating link...') {
           return;
         }
 
         const success = await this.copyText(link);
-        const original = elem.textContent;
+        const originalValue = typeof elem.value === 'string' ? elem.value : elem.textContent;
         if (success) {
-          elem.textContent = '✅ Link copied!';
+          if (typeof elem.value === 'string') {
+            elem.value = '✅ Link copied!';
+          } else {
+            elem.textContent = '✅ Link copied!';
+          }
         } else {
-          elem.textContent = '⚠️ Unable to copy automatically';
+          if (typeof elem.value === 'string') {
+            elem.value = '⚠️ Unable to copy automatically';
+          } else {
+            elem.textContent = '⚠️ Unable to copy automatically';
+          }
           this.showToast('Copy failed. Select the text manually.', 'warning');
         }
         setTimeout(() => {
-          elem.textContent = elem.dataset?.link || original;
+          const restored = elem.dataset?.link || originalValue;
+          if (typeof elem.value === 'string') {
+            elem.value = restored;
+          } else {
+            elem.textContent = restored;
+          }
         }, 2000);
       }
 
@@ -663,9 +764,12 @@ Password: [share securely via a different channel]
         this.latestFingerprint = '';
         this.lastAnnouncedEpoch = -1;
         this.roomId = this.generateRoomId();
-        this.generateRoomSalt();
+        this.roomSalt = null;
+        this.roomSaltBase64 = '';
         this.resetMessageCounters();
         this.pendingRoomSalt = null;
+        this.currentInvite = null;
+        this.seats = { host: null, guest: null };
         this.updateFingerprintDisplay(null);
         const roomCodeDisplay = DOM.roomCode;
         if (roomCodeDisplay) {
@@ -675,29 +779,24 @@ Password: [share securely via a different channel]
         if (shareSection) {
           shareSection.style.display = 'none';
         }
-        const shareLinkEl = DOM.shareLink;
-        if (shareLinkEl) {
-          shareLinkEl.textContent = 'Generating link...';
-          delete shareLinkEl.dataset.link;
-        }
-        this.updateRoomSaltDisplay();
+        this.updateInviteLink('');
         this.currentShareLink = '';
         this.setWaitingBanner(false, '');
         this.showScreen('hostScreen');
       }
 
-      showJoin() {
+      showJoin(statusMessage = 'Secure invite required', detailMessage = 'Open the one-time invite link shared with you to join.') {
         CryptoManager.reset();
         this.latestFingerprint = '';
         this.lastAnnouncedEpoch = -1;
-        if (!this.pendingRoomSalt) {
-          const joinSalt = DOM.joinSalt;
-          if (joinSalt) {
-            joinSalt.value = '';
-          }
-        }
         this.updateFingerprintDisplay(null);
         this.resetMessageCounters();
+        if (DOM.joinStatus) {
+          DOM.joinStatus.textContent = statusMessage;
+        }
+        if (DOM.joinStatusDetail) {
+          DOM.joinStatusDetail.textContent = detailMessage;
+        }
         this.showScreen('joinScreen');
       }
 
@@ -859,11 +958,10 @@ Password: [share securely via a different channel]
       }
 
       quickJoin(roomId) {
-        const joinCode = DOM.joinCode;
-        if (joinCode) {
-          joinCode.value = roomId;
-        }
-        this.showJoin();
+        const detail = roomId
+          ? `Ask the host for a fresh one-time invite to rejoin room ${roomId}.`
+          : 'Ask the host for a fresh one-time invite to join again.';
+        this.showJoin('Secure invite required', detail);
       }
 
       // Utilities
@@ -889,41 +987,7 @@ Password: [share securely via a different channel]
         CryptoManager.setRoomSalt(salt);
         this.roomSalt = CryptoManager.getRoomSalt();
         this.roomSaltBase64 = this.bytesToBase64(this.roomSalt);
-        this.updateRoomSaltDisplay();
         return salt;
-      }
-
-      updateRoomSaltDisplay() {
-        const saltDisplay = DOM.roomSaltDisplay;
-        if (saltDisplay) {
-          if (this.roomSaltBase64) {
-            saltDisplay.textContent = this.roomSaltBase64;
-            saltDisplay.dataset.salt = this.roomSaltBase64;
-          } else {
-            saltDisplay.textContent = 'Generating salt...';
-            delete saltDisplay.dataset.salt;
-          }
-        }
-      }
-
-      async copyRoomSalt() {
-        if (!this.roomSaltBase64) {
-          return;
-        }
-
-        const display = DOM.roomSaltDisplay;
-        const success = await this.copyText(this.roomSaltBase64);
-        if (!display) {
-          return;
-        }
-        const original = display.textContent;
-        display.textContent = success ? '✅ Salt copied!' : '⚠️ Copy failed';
-        if (!success) {
-          this.showToast('Copy failed. Try manual copy.', 'warning');
-        }
-        setTimeout(() => {
-          display.textContent = this.roomSaltBase64 || original;
-        }, 2000);
       }
 
       resetMessageCounters() {
@@ -1271,33 +1335,50 @@ Password: [share securely via a different channel]
 
       // Peer Connection
       async startHost() {
-        const hostPassword = DOM.hostPassword;
-        const password = hostPassword?.value || '';
-        if (!password) {
-          alert('Please enter a password');
-          return;
-        }
-
         this.isHost = true;
         if (!this.roomId) {
           this.roomId = this.generateRoomId();
         }
+
+        let hostSeat;
+        let guestSeat;
+
         try {
-          if (!(this.roomSalt instanceof Uint8Array)) {
-            this.generateRoomSalt();
-          }
+          [hostSeat, guestSeat] = await Promise.all([
+            SecureInvite.generateSeat(),
+            SecureInvite.generateSeat()
+          ]);
         } catch (error) {
-          console.error('Failed to prepare room salt.', error);
-          alert('Unable to generate a secure room salt. Please reload the page and try again.');
+          console.error('Failed to create secure invites.', error);
+          alert('Unable to generate secure invites. Please reload and try again.');
+          return;
+        }
+
+        this.seats = { host: hostSeat, guest: guestSeat };
+
+        const seatSalt = SecureInvite.fromBase64Url(guestSeat.seatId);
+        if (!(seatSalt instanceof Uint8Array)) {
+          alert('Unable to prepare the secure invite. Please try again.');
           return;
         }
 
         try {
-          await CryptoManager.loadStaticKeyFromPassword(password);
+          CryptoManager.setRoomSalt(seatSalt);
+          this.roomSalt = CryptoManager.getRoomSalt();
+          this.roomSaltBase64 = this.bytesToBase64(this.roomSalt);
+          await CryptoManager.loadStaticKeyFromSeat(guestSeat.secretKey, guestSeat.seatId);
         } catch (error) {
-          console.error('Failed to derive encryption key.', error);
-          alert('Unable to derive the encryption key. Please try again with a different password.');
+          console.error('Failed to initialize seat key material.', error);
+          alert('Unable to prepare the secure invite. Please reload and try again.');
           return;
+        }
+
+        try {
+          await this.inviteManagerReady;
+          const token = `${this.roomId}.${hostSeat.seatId}`;
+          this.inviteManager?.markClaimed(token, hostSeat.expiresAt).catch(() => {});
+        } catch (error) {
+          console.warn('Unable to persist host invite claim.', error);
         }
 
         this.keyExchangeComplete = false;
@@ -1307,83 +1388,46 @@ Password: [share securely via a different channel]
         this.resetConversationState();
         this.updateStatus('Creating room...', 'connecting');
 
-        // Generate and display the share link
-        const shareLink = this.generateShareLink(this.roomId);
-        const shareLinkEl = DOM.shareLink;
-        if (shareLinkEl) {
-          shareLinkEl.textContent = shareLink;
-          shareLinkEl.dataset.link = shareLink;
+        let shareLink = '';
+        try {
+          shareLink = await this.generateShareLink(this.roomId, guestSeat);
+        } catch (error) {
+          console.error('Failed to generate invite link.', error);
+          alert('Unable to generate the invite link. Please try again.');
+          return;
         }
-        const shareSection = DOM.shareSection;
-        if (shareSection) {
-          shareSection.style.display = 'block';
-        }
-        this.currentShareLink = shareLink;
+
+        this.updateInviteLink(shareLink);
         this.updateSimpleShareStatus('');
-        this.setWaitingBanner(true, shareLink, 'Share this link and send the password separately to your guest.');
+        this.setWaitingBanner(true, shareLink, 'Share this one-time secure link with your guest.');
         this.showChat();
 
         initPeer(this, this.roomId);
       }
 
-      async startJoin() {
-        const joinCode = DOM.joinCode;
-        const joinPassword = DOM.joinPassword;
-        const saltInput = DOM.joinSalt;
-        const roomId = joinCode?.value.trim();
-        const password = joinPassword?.value || '';
-        const manualSalt = saltInput?.value.trim();
-
-        if (!roomId || !password) {
-          alert('Please enter the room code and password.');
-          return;
+      async startJoinFromInvite(invite) {
+        if (!invite?.roomId || !invite?.seatId || !invite?.secretKey) {
+          throw new Error('Incomplete invite data');
         }
 
-        let saltBytes = null;
-        if (manualSalt) {
-          saltBytes = this.base64ToBytes(manualSalt);
-          if (!saltBytes) {
-            alert('The room salt you entered is invalid. Please paste the exact salt or use the invite link.');
-            return;
-          }
-        } else if (this.pendingRoomSalt instanceof Uint8Array) {
-          saltBytes = this.pendingRoomSalt;
+        await this.inviteManagerReady;
+        await this.inviteManager?.validateInvite(invite);
+
+        const seatBytes = SecureInvite.fromBase64Url(invite.seatId);
+        if (!(seatBytes instanceof Uint8Array)) {
+          throw new Error('Invalid invite seat identifier');
         }
 
-        if (!(saltBytes instanceof Uint8Array) && roomId) {
-          const storedSalt = this.loadStoredInviteSalt(roomId);
-          if (storedSalt) {
-            const decoded = this.base64ToBytes(storedSalt);
-            if (decoded instanceof Uint8Array) {
-              saltBytes = decoded;
-              if (saltInput) {
-                saltInput.value = this.bytesToBase64(decoded);
-              }
-            }
-          }
-        }
-
-        if (!(saltBytes instanceof Uint8Array)) {
-          alert('Room salt is required. Open the invite link or paste the salt shared with you.');
-          return;
-        }
-
-        this.roomId = roomId;
+        this.roomId = invite.roomId;
         this.isHost = false;
         this.currentShareLink = '';
+        this.seats = { host: null, guest: { ...invite, claimed: true } };
         this.resetConversationState();
-        CryptoManager.setRoomSalt(saltBytes);
+        CryptoManager.setRoomSalt(seatBytes);
         this.roomSalt = CryptoManager.getRoomSalt();
         this.roomSaltBase64 = this.bytesToBase64(this.roomSalt);
-        this.rememberInviteDetails(roomId, this.roomSaltBase64);
 
-        try {
-          await CryptoManager.loadStaticKeyFromPassword(password);
-        } catch (error) {
-          console.error('Failed to derive encryption key for joiner.', error);
-          alert('Unable to derive the encryption key. Double-check the password and salt.');
-          return;
-        }
+        await CryptoManager.loadStaticKeyFromSeat(invite.secretKey, invite.seatId);
 
         this.pendingRoomSalt = null;
         this.keyExchangeComplete = false;
@@ -2150,7 +2194,7 @@ Current Key: ${CryptoManager.getCurrentKey() ? 'Loaded ✓' : 'Not set ✗'}</pr
 
         this.resetConversationState();
 
-        this.setWaitingBanner(false, '', 'Share the invite link below to bring someone into this secure room.');
+        this.setWaitingBanner(false, '', 'Share the secure invite link below to bring someone into this room.');
         this.currentShareLink = '';
         this.isHost = false;
         this.roomSalt = null;
@@ -2165,19 +2209,8 @@ Current Key: ${CryptoManager.getCurrentKey() ? 'Loaded ✓' : 'Not set ✗'}</pr
         this.latestFingerprint = '';
         CryptoManager.reset();
 
-        const shareLinkEl = DOM.shareLink;
-        if (shareLinkEl) {
-          shareLinkEl.textContent = 'Generating link...';
-          delete shareLinkEl.dataset.link;
-        }
-
-        const shareSection = DOM.shareSection;
-        if (shareSection) {
-          shareSection.style.display = 'none';
-        }
-
+        this.updateInviteLink('');
         this.updateSimpleShareStatus('');
-        this.updateRoomSaltDisplay();
         this.updateFingerprintDisplay(null);
 
         if (this.conn) this.conn.close();
@@ -2196,21 +2229,10 @@ Current Key: ${CryptoManager.getCurrentKey() ? 'Loaded ✓' : 'Not set ✗'}</pr
           encryptedToggle.classList.remove('active');
         }
 
-        const hostPassword = DOM.hostPassword;
-        if (hostPassword) {
-          hostPassword.value = '';
-        }
-        const joinPassword = DOM.joinPassword;
-        if (joinPassword) {
-          joinPassword.value = '';
-        }
-        const joinCode = DOM.joinCode;
-        if (joinCode) {
-          joinCode.value = '';
-        }
-        const joinSalt = DOM.joinSalt;
-        if (joinSalt) {
-          joinSalt.value = '';
+        const inviteInput = DOM.inviteLink;
+        if (inviteInput) {
+          inviteInput.value = 'Generating secure link...';
+          delete inviteInput.dataset.link;
         }
 
         this.updateStatus('Disconnected', '');

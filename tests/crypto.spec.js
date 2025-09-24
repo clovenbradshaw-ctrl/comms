@@ -4,7 +4,9 @@ const {
   deriveRatchetKey,
   deriveSharedSecret,
   deriveSharedKey,
-  fingerprintFromMaterial
+  fingerprintFromMaterial,
+  SecureInvite,
+  InviteManager
 } = require('../lib/crypto.js');
 
 const { subtle } = globalThis.crypto;
@@ -78,6 +80,35 @@ async function main() {
   assert.strictEqual(uint8ToHex(material), 'd17f05296513e010970fe144c2f6aa3bd068db7338bb8fecd04801452b97b140');
   const sharedFingerprint = await fingerprintFromMaterial(material);
   assert.strictEqual(sharedFingerprint, '🔐 Cobalt-Hawk-Fourteen-Lagoon');
+
+  const seat = await SecureInvite.generateSeat();
+  assert.ok(seat.seatId && seat.secretKey, 'Seat should include identifiers');
+  const derivedSeat = await SecureInvite.deriveSeatKey(seat.secretKey, seat.seatId);
+  const repeatSeat = await SecureInvite.deriveSeatKey(seat.secretKey, seat.seatId);
+  assert.strictEqual(Buffer.from(derivedSeat.baseKeyMaterial).toString('hex'), Buffer.from(repeatSeat.baseKeyMaterial).toString('hex'));
+  assert.strictEqual(derivedSeat.fingerprint, repeatSeat.fingerprint);
+
+  const invite = {
+    roomId: 'room-test',
+    seatId: seat.seatId,
+    secretKey: seat.secretKey,
+    expiresAt: Date.now() + 60000
+  };
+  invite.signature = await SecureInvite.signInvite(invite.roomId, invite.seatId, invite.secretKey, invite.expiresAt);
+  assert.ok(await SecureInvite.verifyInviteSignature(invite), 'Invite signature should validate');
+
+  const manager = new InviteManager();
+  if (manager?.ready && typeof manager.ready.then === 'function') {
+    await manager.ready;
+  }
+  await manager.validateInvite(invite);
+  let reuseError = null;
+  try {
+    await manager.validateInvite(invite);
+  } catch (error) {
+    reuseError = error;
+  }
+  assert.ok(reuseError instanceof Error, 'Reusing invite should throw');
 
   console.log('Crypto vectors verified');
 }
