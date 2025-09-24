@@ -28,7 +28,26 @@ const DOM = {
   chatMessages: document.getElementById('chatMessages'),
   encryptedToggle: document.getElementById('encryptedToggle'),
   schemaToggle: document.getElementById('schemaToggle'),
-  systemAnnouncements: document.getElementById('systemAnnouncements')
+  systemAnnouncements: document.getElementById('systemAnnouncements'),
+  memberSidebar: document.getElementById('memberSidebar'),
+  identityModal: document.getElementById('identityModal'),
+  identityCreateForm: document.getElementById('identityCreateForm'),
+  identitySuggestions: document.getElementById('identitySuggestions'),
+  identityNameInput: document.getElementById('identityNameInput'),
+  identityRefreshBtn: document.getElementById('identityRefreshBtn'),
+  identityPasswordInput: document.getElementById('identityPasswordInput'),
+  identityStrengthBar: document.getElementById('identityStrengthBar'),
+  identityStrengthText: document.getElementById('identityStrengthText'),
+  identityModeCreate: document.getElementById('identityModeCreate'),
+  identityModeReturning: document.getElementById('identityModeReturning'),
+  identityReturningForm: document.getElementById('identityReturningForm'),
+  identityReturningPassword: document.getElementById('identityReturningPassword'),
+  identityModalTitle: document.getElementById('identityModalTitle'),
+  identityModalSubtitle: document.getElementById('identityModalSubtitle'),
+  identityHint: document.getElementById('identityHint'),
+  identityUseNew: document.getElementById('identityUseNew'),
+  identityError: document.getElementById('identityError'),
+  identitySubmitBtn: document.getElementById('identitySubmitBtn')
 };
 
 const DEFAULT_FEATURE_FLAGS = {
@@ -108,6 +127,15 @@ class SecureChat {
         this.inviteManager = typeof InviteManager === 'function' ? new InviteManager() : null;
         this.inviteManagerReady = this.inviteManager?.ready || Promise.resolve();
         this.pendingInvite = null;
+        this.roomMembers = typeof RoomMembers === 'function' ? new RoomMembers(DOM.memberSidebar) : null;
+        this.nameGenerator = typeof SecureNameGenerator === 'function' ? new SecureNameGenerator() : null;
+        this.identityManager = null;
+        this.localIdentity = null;
+        this.remoteIdentity = null;
+        this.identityModalResolve = null;
+        this.identityModalMode = 'create';
+        this.identityRetryTimer = null;
+        this.pendingStoredIdentity = null;
         this.cryptoUpdates = CryptoManager.onUpdated((update) => {
           const fingerprint = update?.fingerprint || '';
           this.latestFingerprint = fingerprint;
@@ -127,6 +155,10 @@ class SecureChat {
           if (!fingerprint && update?.reason === 'reset') {
             this.lastAnnouncedEpoch = -1;
           }
+
+          if (this.localIdentity && this.conn && CryptoManager.getCurrentKey()) {
+            this.scheduleIdentityAnnouncement(true);
+          }
         });
 
         this.dom = DOM;
@@ -142,6 +174,7 @@ class SecureChat {
         this.updateFingerprintDisplay(null);
         this.initDevRoutes();
         this.applyFeatureFlags();
+        this.initIdentityFlow();
       }
 
       initEventListeners() {
@@ -229,6 +262,505 @@ class SecureChat {
             encryptedToggle.setAttribute('aria-hidden', 'false');
             encryptedToggle.style.display = '';
           }
+        }
+      }
+
+      // Identity & Members
+      initIdentityFlow() {
+        this.identityModal = DOM.identityModal;
+        this.identitySelectedName = '';
+
+        if (!this.identityModal) {
+          return;
+        }
+
+        const createForm = DOM.identityCreateForm;
+        if (createForm) {
+          createForm.addEventListener('submit', (event) => {
+            event.preventDefault();
+            this.handleIdentityCreateSubmit();
+          });
+        }
+
+        const returningForm = DOM.identityReturningForm;
+        if (returningForm) {
+          returningForm.addEventListener('submit', (event) => {
+            event.preventDefault();
+            this.handleIdentityReturningSubmit();
+          });
+        }
+
+        if (DOM.identityRefreshBtn) {
+          DOM.identityRefreshBtn.addEventListener('click', () => this.refreshIdentitySuggestions(true));
+        }
+
+        if (DOM.identityNameInput) {
+          DOM.identityNameInput.addEventListener('input', () => {
+            this.identitySelectedName = '';
+            this.highlightIdentitySuggestion(null);
+            this.updateJoinButtonText();
+            this.clearIdentityError();
+          });
+        }
+
+        if (DOM.identityPasswordInput) {
+          DOM.identityPasswordInput.addEventListener('input', () => {
+            this.updatePasswordStrength();
+            this.clearIdentityError();
+          });
+        }
+
+        if (DOM.identityReturningPassword) {
+          DOM.identityReturningPassword.addEventListener('input', () => this.clearIdentityError());
+        }
+
+        if (DOM.identityUseNew) {
+          DOM.identityUseNew.addEventListener('click', () => {
+            this.displayIdentityMode('create');
+            this.refreshIdentitySuggestions(true);
+          });
+        }
+
+        this.refreshIdentitySuggestions(true);
+      }
+
+      refreshIdentitySuggestions(force = false) {
+        const container = DOM.identitySuggestions;
+        if (!container || !this.nameGenerator) {
+          return;
+        }
+
+        const names = this.nameGenerator.generateMultiple(5);
+        container.innerHTML = '';
+
+        names.forEach((name, index) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'name-option';
+          button.dataset.name = name;
+          button.innerHTML = `<span class="name-avatar">${this.getEmojiForName(name)}</span><span class="name-text">${this.escapeHtml(name)}</span>`;
+          button.addEventListener('click', () => this.selectIdentitySuggestion(name));
+          container.appendChild(button);
+          if (index === 0 && (force || !this.identitySelectedName)) {
+            this.identitySelectedName = name;
+            button.classList.add('selected');
+          }
+        });
+
+        if (this.identitySelectedName) {
+          this.highlightIdentitySuggestion(this.identitySelectedName);
+        }
+
+        if (DOM.identityNameInput && force) {
+          DOM.identityNameInput.value = '';
+        }
+
+        this.updateJoinButtonText();
+      }
+
+      selectIdentitySuggestion(name) {
+        this.identitySelectedName = name;
+        this.highlightIdentitySuggestion(name);
+        if (DOM.identityNameInput) {
+          DOM.identityNameInput.value = '';
+        }
+        this.updateJoinButtonText();
+        this.clearIdentityError();
+      }
+
+      highlightIdentitySuggestion(name) {
+        const container = DOM.identitySuggestions;
+        if (!container) {
+          return;
+        }
+
+        container.querySelectorAll('.name-option').forEach((button) => {
+          const candidate = button?.dataset?.name || '';
+          button.classList.toggle('selected', Boolean(name) && candidate === name);
+        });
+      }
+
+      getEmojiForName(name) {
+        const avatar = this.computeAvatarFromName(name);
+        return avatar.emoji;
+      }
+
+      computeAvatarFromName(name) {
+        if (typeof name !== 'string' || !name) {
+          return { emoji: '🙂', color: '#4A9FD5' };
+        }
+        const emojis = ['🦊', '🦁', '🐺', '🦅', '🐉', '🦉', '🐯', '🦜', '🦋', '🐠'];
+        const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD'];
+        let hash = 0;
+        for (let i = 0; i < name.length; i++) {
+          hash = (hash << 5) - hash + name.charCodeAt(i);
+          hash |= 0;
+        }
+        hash = Math.abs(hash);
+        const emoji = emojis[hash % emojis.length];
+        const color = colors[Math.floor(hash / emojis.length) % colors.length];
+        return { emoji, color };
+      }
+
+      getSelectedDisplayName() {
+        const custom = DOM.identityNameInput?.value?.trim();
+        if (custom) {
+          return custom;
+        }
+        return this.identitySelectedName || '';
+      }
+
+      updateJoinButtonText() {
+        const button = DOM.identitySubmitBtn;
+        const subtitle = DOM.identityModalSubtitle;
+        const name = this.getSelectedDisplayName();
+        if (button) {
+          button.textContent = name ? `Join as ${name}` : 'Join Secure Room';
+        }
+        if (subtitle) {
+          subtitle.textContent = name
+            ? `Secure your seat as ${name}`
+            : 'Secure your seat in this room';
+        }
+      }
+
+      updatePasswordStrength() {
+        const value = DOM.identityPasswordInput?.value || '';
+        const bar = DOM.identityStrengthBar;
+        const text = DOM.identityStrengthText;
+        let score = 0;
+        if (value.length >= 8) score += 1;
+        if (value.length >= 12) score += 1;
+        if (/[A-Z]/.test(value) && /[a-z]/.test(value)) score += 1;
+        if (/\d/.test(value)) score += 1;
+        if (/[^A-Za-z0-9]/.test(value)) score += 1;
+        score = Math.min(score, 4);
+        if (bar) {
+          bar.setAttribute('data-strength', String(score));
+        }
+        if (text) {
+          const labels = ['Very weak', 'Weak', 'Okay', 'Strong', 'Excellent'];
+          text.textContent = labels[score] || 'Choose a strong password';
+        }
+      }
+
+      showIdentityError(message) {
+        const error = DOM.identityError;
+        if (!error) {
+          return;
+        }
+        error.textContent = message;
+        error.hidden = false;
+      }
+
+      clearIdentityError() {
+        const error = DOM.identityError;
+        if (error) {
+          error.hidden = true;
+          error.textContent = '';
+        }
+      }
+
+      showIdentityModal(mode = 'create', options = {}) {
+        if (!this.identityModal) {
+          return Promise.resolve(null);
+        }
+
+        this.identityModalMode = mode;
+        this.clearIdentityError();
+        this.displayIdentityMode(mode, options?.stored);
+        this.identityModal.hidden = false;
+
+        if (mode === 'create') {
+          this.refreshIdentitySuggestions(!this.identitySelectedName);
+          this.updatePasswordStrength();
+          setTimeout(() => DOM.identityNameInput?.focus(), 0);
+        } else {
+          setTimeout(() => DOM.identityReturningPassword?.focus(), 0);
+        }
+
+        return new Promise((resolve) => {
+          this.identityModalResolve = resolve;
+        });
+      }
+
+      displayIdentityMode(mode, stored) {
+        const createSection = DOM.identityModeCreate;
+        const returningSection = DOM.identityModeReturning;
+        const title = DOM.identityModalTitle;
+        const hint = DOM.identityHint;
+        const subtitle = DOM.identityModalSubtitle;
+        this.clearIdentityError();
+
+        if (mode === 'returning') {
+          createSection?.setAttribute('hidden', '');
+          returningSection?.removeAttribute('hidden');
+          if (title) {
+            title.textContent = 'Welcome Back';
+          }
+          if (subtitle) {
+            subtitle.textContent = 'Unlock your saved identity to continue';
+          }
+          if (hint) {
+            hint.textContent = stored?.hint || 'You';
+          }
+          this.pendingStoredIdentity = stored || null;
+        } else {
+          returningSection?.setAttribute('hidden', '');
+          createSection?.removeAttribute('hidden');
+          if (title) {
+            title.textContent = 'Choose Your Identity';
+          }
+          if (subtitle) {
+            subtitle.textContent = 'Secure your seat in this room';
+          }
+          this.pendingStoredIdentity = null;
+          this.updateJoinButtonText();
+        }
+      }
+
+      hideIdentityModal(result = null) {
+        if (!this.identityModal) {
+          return;
+        }
+        this.identityModal.hidden = true;
+        if (typeof this.identityModalResolve === 'function') {
+          this.identityModalResolve(result);
+          this.identityModalResolve = null;
+        }
+      }
+
+      async handleIdentityCreateSubmit() {
+        if (!this.identityManager) {
+          try {
+            this.identityManager = new RoomIdentity(this.roomId);
+          } catch (error) {
+            console.warn('Unable to initialise room identity manager.', error);
+            this.showIdentityError('Identity service unavailable in this browser.');
+            return;
+          }
+        }
+
+        const displayName = this.getSelectedDisplayName();
+        if (!displayName) {
+          this.showIdentityError('Select or enter a display name.');
+          return;
+        }
+
+        const password = DOM.identityPasswordInput?.value?.trim() || '';
+        if (password.length < 8) {
+          this.showIdentityError('Password must be at least 8 characters.');
+          return;
+        }
+
+        try {
+          const identity = await this.identityManager.createIdentity(displayName, password);
+          this.localIdentity = identity;
+          this.roomMembers?.upsertMember(identity, { isHost: this.isHost, online: true });
+          this.hideIdentityModal(identity);
+          this.scheduleIdentityAnnouncement();
+        } catch (error) {
+          console.warn('Failed to create room identity.', error);
+          this.showIdentityError('Unable to create identity. Please try a different password.');
+        }
+      }
+
+      async handleIdentityReturningSubmit() {
+        if (!this.identityManager) {
+          try {
+            this.identityManager = new RoomIdentity(this.roomId);
+          } catch (error) {
+            this.showIdentityError('Identity service unavailable.');
+            return;
+          }
+        }
+
+        const password = DOM.identityReturningPassword?.value?.trim() || '';
+        if (!password) {
+          this.showIdentityError('Enter the room password.');
+          return;
+        }
+
+        try {
+          const identity = await this.identityManager.verifyReturningMember(password);
+          if (!identity) {
+            this.showIdentityError('No saved identity found for this room.');
+            return;
+          }
+          this.localIdentity = identity;
+          this.roomMembers?.upsertMember(identity, { isHost: this.isHost, online: true });
+          this.hideIdentityModal(identity);
+          this.scheduleIdentityAnnouncement();
+        } catch (error) {
+          console.warn('Failed to decrypt stored identity.', error);
+          this.showIdentityError('Invalid password for this room identity.');
+        }
+      }
+
+      async prepareIdentity() {
+        if (!this.roomId || typeof RoomIdentity !== 'function') {
+          return null;
+        }
+
+        if (!this.identityManager || this.identityManager.roomId !== this.roomId) {
+          try {
+            this.identityManager = new RoomIdentity(this.roomId);
+          } catch (error) {
+            console.warn('Unable to initialise identity manager.', error);
+            return null;
+          }
+        }
+
+        if (this.localIdentity?.id) {
+          this.roomMembers?.upsertMember(this.localIdentity, { isHost: this.isHost, online: true });
+          return this.localIdentity;
+        }
+
+        try {
+          const stored = await this.identityManager.storage.getRoomIdentity(this.roomId);
+          if (stored) {
+            const identity = await this.showIdentityModal('returning', { stored });
+            if (identity) {
+              this.localIdentity = identity;
+              this.roomMembers?.upsertMember(identity, { isHost: this.isHost, online: true });
+              this.scheduleIdentityAnnouncement();
+              return identity;
+            }
+          }
+        } catch (error) {
+          console.warn('Unable to load stored identity.', error);
+        }
+
+        const created = await this.showIdentityModal('create');
+        if (created) {
+          this.localIdentity = created;
+          this.roomMembers?.upsertMember(created, { isHost: this.isHost, online: true });
+          this.scheduleIdentityAnnouncement();
+          return created;
+        }
+
+        return null;
+      }
+
+      scheduleIdentityAnnouncement(immediate = false) {
+        if (!this.localIdentity) {
+          return;
+        }
+
+        this.clearIdentityAnnouncement();
+
+        const attempt = async () => {
+          if (!this.localIdentity) {
+            return;
+          }
+          if (!this.conn || !CryptoManager.getCurrentKey()) {
+            this.identityRetryTimer = setTimeout(attempt, 1500);
+            return;
+          }
+
+          const payload = {
+            type: 'identity_profile',
+            identity: {
+              id: this.localIdentity.id,
+              displayName: this.localIdentity.displayName,
+              avatar: this.localIdentity.avatar,
+              publicKey: this.localIdentity.publicKey,
+              isHost: this.isHost,
+              lastSeen: Date.now()
+            }
+          };
+
+          const sent = await this.sendSecureControlMessage(payload);
+          if (!sent) {
+            this.identityRetryTimer = setTimeout(attempt, 1500);
+          }
+        };
+
+        if (immediate) {
+          attempt();
+        } else {
+          this.identityRetryTimer = setTimeout(attempt, 300);
+        }
+      }
+
+      clearIdentityAnnouncement() {
+        if (this.identityRetryTimer) {
+          clearTimeout(this.identityRetryTimer);
+          this.identityRetryTimer = null;
+        }
+      }
+
+      handleIncomingIdentity(payload) {
+        if (!payload || typeof payload !== 'object') {
+          return;
+        }
+
+        const identity = {
+          id: typeof payload.id === 'string' ? payload.id : this.remoteUserId || 'peer',
+          displayName: typeof payload.displayName === 'string' ? payload.displayName : 'Guest',
+          avatar: this.normalizeAvatar(payload.avatar),
+          publicKey: typeof payload.publicKey === 'string' ? payload.publicKey : null,
+          lastSeen: typeof payload.lastSeen === 'number' ? payload.lastSeen : Date.now()
+        };
+
+        identity.isHost = Boolean(payload.isHost);
+        identity.verified = Boolean(payload.verified);
+
+        this.remoteIdentity = identity;
+        this.roomMembers?.upsertMember(identity, {
+          isHost: identity.isHost,
+          online: true,
+          verified: identity.verified,
+          lastSeen: Date.now()
+        });
+      }
+
+      normalizeAvatar(avatar) {
+        if (!avatar || typeof avatar !== 'object') {
+          return { emoji: '🙂', color: '#4A9FD5' };
+        }
+        const emoji = typeof avatar.emoji === 'string' ? avatar.emoji : '🙂';
+        const color = typeof avatar.color === 'string' ? avatar.color : '#4A9FD5';
+        return { emoji, color };
+      }
+
+      escapeHtml(value) {
+        if (typeof value !== 'string') {
+          return '';
+        }
+        return value
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#039;');
+      }
+
+      resetIdentityState(options = {}) {
+        const { preserveLocal = false } = options;
+        if (this.identityModal && !this.identityModal.hidden) {
+          this.identityModal.hidden = true;
+        }
+        if (typeof this.identityModalResolve === 'function') {
+          this.identityModalResolve(null);
+          this.identityModalResolve = null;
+        }
+        if (!preserveLocal) {
+          this.localIdentity = null;
+        }
+        this.remoteIdentity = null;
+        this.identityManager = null;
+        this.pendingStoredIdentity = null;
+        this.clearIdentityAnnouncement();
+        if (this.roomMembers) {
+          this.roomMembers.members.clear();
+          this.roomMembers.render();
+        }
+      }
+
+      markRemoteOffline() {
+        if (this.remoteIdentity?.id) {
+          this.roomMembers?.markOffline(this.remoteIdentity.id);
         }
       }
 
@@ -770,6 +1302,7 @@ This invite can be used only once. Share the link privately.`;
         this.pendingRoomSalt = null;
         this.currentInvite = null;
         this.seats = { host: null, guest: null };
+        this.resetIdentityState();
         this.updateFingerprintDisplay(null);
         const roomCodeDisplay = DOM.roomCode;
         if (roomCodeDisplay) {
@@ -791,6 +1324,7 @@ This invite can be used only once. Share the link privately.`;
         this.lastAnnouncedEpoch = -1;
         this.updateFingerprintDisplay(null);
         this.resetMessageCounters();
+        this.resetIdentityState();
         if (DOM.joinStatus) {
           DOM.joinStatus.textContent = statusMessage;
         }
@@ -825,6 +1359,10 @@ This invite can be used only once. Share the link privately.`;
         }
 
         this.subscribeToMessages(this.roomId);
+
+        this.prepareIdentity().catch((error) => {
+          console.warn('Failed to prepare identity for room.', error);
+        });
 
         setTimeout(() => this.focusDefaultForScreen('chatScreen'), 100);
       }
@@ -1193,6 +1731,9 @@ This invite can be used only once. Share the link privately.`;
         }
 
         this.heartbeat.lastReceived = Date.now();
+        if (this.remoteIdentity?.id) {
+          this.roomMembers?.updatePresence(this.remoteIdentity.id);
+        }
 
         if (message.type === 'heartbeat') {
           await this.sendSecureControlMessage({
@@ -1241,6 +1782,11 @@ This invite can be used only once. Share the link privately.`;
 
         if (message.type === 'key_exchange' || message.type === 'key_exchange_ack') {
           await this.handleKeyExchangeMessage(message);
+          return true;
+        }
+
+        if (message.type === 'identity_profile') {
+          this.handleIncomingIdentity(message.identity || {});
           return true;
         }
 
@@ -2208,6 +2754,7 @@ Current Key: ${CryptoManager.getCurrentKey() ? 'Loaded ✓' : 'Not set ✗'}</pr
         this.lastAnnouncedEpoch = -1;
         this.latestFingerprint = '';
         CryptoManager.reset();
+        this.resetIdentityState();
 
         this.updateInviteLink('');
         this.updateSimpleShareStatus('');
