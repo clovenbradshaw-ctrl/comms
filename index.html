@@ -309,7 +309,7 @@
         </select>
         <div class="modal-actions">
           <button type="submit" class="btn-primary">Create Workspace</button>
-          <button type="button" class="btn-secondary" onclick="closeModal('createWorkspaceModal')">Cancel</button>
+          <button type="button" class="btn-secondary" data-action="close-modal" data-target="createWorkspaceModal">Cancel</button>
         </div>
       </form>
     </div>
@@ -321,7 +321,7 @@
       <h2 id="findWorkspaceTitle">Find Workspaces</h2>
       <input type="text" id="workspaceSearch" placeholder="Search or enter invite code">
       <div id="workspaceList"></div>
-      <button class="btn-secondary" onclick="closeModal('findWorkspaceModal')">Close</button>
+      <button class="btn-secondary" data-action="close-modal" data-target="findWorkspaceModal">Close</button>
     </div>
   </div>
 

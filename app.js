@@ -2818,6 +2818,9 @@ This invite can be used only once. Share the link privately.`;
         this.setRoomContextMode(null);
         this.useWorkspaceLayout();
         this.roomURLManager.clearRoute();
+        if (!window.workspaceApp) {
+          window.workspaceApp = new WorkspaceApp();
+        }
         if (window.workspaceApp?.renderLanding) {
           window.workspaceApp.renderLanding();
         }
