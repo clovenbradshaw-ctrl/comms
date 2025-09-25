@@ -196,6 +196,10 @@ function showCreateWorkspaceModal() {
   clearModal(form);
   openModal('createWorkspaceModal');
 
+  if (form._workspaceSubmitHandler) {
+    form.removeEventListener('submit', form._workspaceSubmitHandler);
+  }
+
   const handleSubmit = event => {
     event.preventDefault();
     const nameInput = form.querySelector('#workspaceName');
@@ -288,7 +292,8 @@ function showCreateWorkspaceModal() {
     enterWorkspace(workspace.id);
   };
 
-  form.addEventListener('submit', handleSubmit, { once: true });
+  form._workspaceSubmitHandler = handleSubmit;
+  form.addEventListener('submit', handleSubmit);
 }
 
 function renderWorkspaceDiscoveryList(searchTerm = '') {
