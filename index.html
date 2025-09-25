@@ -18,7 +18,24 @@
 
 </head>
 <body>
-  <div class="app" role="main">
+  <div id="workspaceApp" class="workspace-app" role="main">
+    <header class="workspace-hero">
+      <div class="hero-content">
+        <div class="hero-badge">Persistent Workspaces</div>
+        <h1>Build a secure home for every team</h1>
+        <p>Create Slack-style hubs with invite rules, approval workflows, and reusable channels that never disappear.</p>
+        <div class="hero-actions">
+          <button id="createWorkspaceBtn" class="btn-primary large">Create Workspace</button>
+          <button id="findWorkspaceBtn" class="btn-secondary large">Find Workspace</button>
+        </div>
+      </div>
+      <div class="hero-stats" id="workspaceHeroStats" aria-live="polite"></div>
+    </header>
+
+    <main id="workspaceContent" class="workspace-content" aria-live="polite"></main>
+  </div>
+
+  <div class="app legacy-app" role="main" id="legacyApp" hidden>
     <!-- Header -->
     <div class="header">
       <div class="logo">
@@ -280,6 +297,7 @@
   <script src="lib/net.js"></script>
   <script src="lib/bus.js"></script>
   <script src="app.js"></script>
+  <script src="workspace.js"></script>
 
 </body>
 </html>
