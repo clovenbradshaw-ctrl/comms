@@ -25,8 +25,14 @@
         <h1>Build a secure home for every team</h1>
         <p>Create Slack-style hubs with invite rules, approval workflows, and reusable channels that never disappear.</p>
         <div class="hero-actions">
-          <button id="createWorkspaceBtn" class="btn-primary large">Create Workspace</button>
-          <button id="findWorkspaceBtn" class="btn-secondary large">Find Workspace</button>
+          <button id="createWorkspaceBtn" class="btn-primary large">
+            <span class="btn-icon">✨</span>
+            <span>Create a workspace</span>
+          </button>
+          <button id="findWorkspaceBtn" class="btn-secondary large">
+            <span class="btn-icon">🔍</span>
+            <span>Join with an invite</span>
+          </button>
         </div>
       </div>
       <div class="hero-stats" id="workspaceHeroStats" aria-live="polite"></div>
@@ -290,38 +296,47 @@
 
   <div id="reentryContainer" hidden></div>
 
-  <!-- Create Workspace Modal -->
-  <div id="createWorkspaceModal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="createWorkspaceTitle">
-    <div class="modal-content">
-      <h2 id="createWorkspaceTitle">Create New Workspace</h2>
-      <form id="createWorkspaceForm">
-        <p class="modal-error" role="alert" hidden></p>
-        <input type="text" id="workspaceName" placeholder="Workspace Name" required maxlength="50">
-        <textarea id="workspaceDesc" placeholder="Description (optional)" maxlength="200"></textarea>
-        <select id="workspaceType">
-          <option value="public">Public - Anyone can find</option>
-          <option value="private">Private - Invite only</option>
-        </select>
-        <select id="workspaceJoinRules">
-          <option value="open">Open - Anyone can join</option>
-          <option value="request">Request - Approval needed</option>
-          <option value="invite">Invite Only</option>
-        </select>
-        <div class="modal-actions">
-          <button type="submit" class="btn-primary">Create Workspace</button>
-          <button type="button" class="btn-secondary" data-action="close-modal" data-target="createWorkspaceModal">Cancel</button>
+  <div id="storagePassphraseModal" class="sheet-modal" hidden role="dialog" aria-modal="true" aria-labelledby="storagePassphraseTitle">
+    <div class="sheet-modal__overlay" data-action="close-passphrase"></div>
+    <div class="sheet-modal__content" role="document">
+      <button type="button" class="sheet-modal__close" data-action="close-passphrase" aria-label="Close passphrase dialog">✕</button>
+      <div class="sheet-modal__header">
+        <div class="sheet-modal__icon">🛡️</div>
+        <div>
+          <p class="sheet-modal__eyebrow">Encrypted history</p>
+          <h2 id="storagePassphraseTitle">Protect your saved conversations</h2>
+          <p class="sheet-modal__subtitle">Set a password so only you can unlock stored chats on this device.</p>
+        </div>
+      </div>
+      <form id="storagePassphraseForm" novalidate>
+        <div class="field-group">
+          <label for="storagePassphraseInput">Workspace history password</label>
+          <input type="password" id="storagePassphraseInput" minlength="8" autocomplete="new-password" placeholder="Enter a strong password" required>
+          <p class="field-hint">We'll use this password to encrypt messages saved locally. Keep it somewhere safe.</p>
+          <div class="strength-meter" id="storagePassphraseStrength" aria-live="polite">
+            <span class="strength-bar"></span>
+            <span class="strength-bar"></span>
+            <span class="strength-bar"></span>
+            <span class="strength-bar"></span>
+            <span class="strength-label" id="storagePassphraseStrengthText">Strength: weak</span>
+          </div>
+          <p class="field-error" id="storagePassphraseError" role="alert" hidden></p>
+        </div>
+        <div class="field-group inline">
+          <label class="toggle">
+            <input type="checkbox" id="storageRememberPassphrase" checked>
+            <span>Remember this password for the current session</span>
+          </label>
+          <p class="field-hint">We'll forget it as soon as you close the tab.</p>
+        </div>
+        <div class="sheet-modal__actions">
+          <button type="submit" class="btn-primary" data-loading-text="Encrypting…">
+            <span class="btn-icon">🔐</span>
+            <span class="btn-label">Save password</span>
+          </button>
+          <button type="button" class="btn-secondary" data-action="skip-passphrase">Not now</button>
         </div>
       </form>
-    </div>
-  </div>
-
-  <!-- Find Workspace Modal -->
-  <div id="findWorkspaceModal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="findWorkspaceTitle">
-    <div class="modal-content">
-      <h2 id="findWorkspaceTitle">Find Workspaces</h2>
-      <input type="text" id="workspaceSearch" placeholder="Search or enter invite code">
-      <div id="workspaceList"></div>
-      <button class="btn-secondary" data-action="close-modal" data-target="findWorkspaceModal">Close</button>
     </div>
   </div>
 
