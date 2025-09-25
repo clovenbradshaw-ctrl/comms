@@ -163,6 +163,17 @@ function closeModal(id) {
   }
 }
 
+document.addEventListener('click', event => {
+  const button = event.target.closest('[data-action="close-modal"]');
+  if (!button) {
+    return;
+  }
+  const target = button.getAttribute('data-target');
+  if (target) {
+    closeModal(target);
+  }
+});
+
 function clearModal(form) {
   if (!form) {
     return;
@@ -754,20 +765,34 @@ class WorkspaceApp {
   }
 }
 
-// Initialize workspace functionality when DOM loads
-document.addEventListener('DOMContentLoaded', function() {
+function initializeWorkspace() {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeWorkspace, { once: true });
+    return;
+  }
+
+  window.closeModal = closeModal;
+
+  if (!window.workspaceApp) {
+    window.workspaceApp = new WorkspaceApp();
+  }
+
+  window.enterWorkspace = enterWorkspace;
+  window.leaveWorkspaceView = leaveWorkspaceView;
+
   const createBtn = document.getElementById('createWorkspaceBtn');
   const findBtn = document.getElementById('findWorkspaceBtn');
 
-  if (createBtn) {
+  if (createBtn && !createBtn._initialized) {
     createBtn.addEventListener('click', showCreateWorkspaceModal);
+    createBtn._initialized = true;
   }
 
-  if (findBtn) {
+  if (findBtn && !findBtn._initialized) {
     findBtn.addEventListener('click', showFindWorkspaceModal);
+    findBtn._initialized = true;
   }
 
-  // Update hero stats on load
   updateWorkspaceStats();
 
   const activeRaw = localStorage.getItem(ACTIVE_WORKSPACE_KEY);
@@ -781,7 +806,9 @@ document.addEventListener('DOMContentLoaded', function() {
       console.warn('Unable to restore active workspace', error);
     }
   }
-});
+}
+
+initializeWorkspace();
 
 function updateWorkspaceStats() {
   const statsEl = document.getElementById('workspaceHeroStats');
@@ -806,8 +833,3 @@ window.addEventListener('keydown', event => {
   }
 });
 
-window.closeModal = closeModal;
-window.enterWorkspace = enterWorkspace;
-window.leaveWorkspaceView = leaveWorkspaceView;
-
-window.workspaceApp = new WorkspaceApp();
