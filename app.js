@@ -1267,15 +1267,13 @@ class SecureChat {
         this.identityManager = null;
         this.localIdentity = null;
         this.remoteIdentity = null;
-        this.identityModalResolve = null;
-        this.identityModalMode = 'create';
         this.identityRetryTimer = null;
-        this.pendingStoredIdentity = null;
         this.roomHistory = new RoomHistory();
         this.roomReentry = new RoomReentry(this.roomHistory, this);
         this.roomURLManager = new RoomURLManager(this);
         this.bookmarkableRooms = new BookmarkableRooms(this);
         this.deepLinking = new DeepLinking(this);
+        this.entryScreen = new WorkspaceEntryScreen(this);
         this.pendingReentryRequest = null;
         this.activeRoomContextMode = null;
         this.cryptoUpdates = CryptoManager.onUpdated((update) => {
@@ -1338,7 +1336,7 @@ class SecureChat {
         this.updateFingerprintDisplay(null);
         this.initDevRoutes();
         this.applyFeatureFlags();
-        this.initIdentityFlow();
+        this.entryScreen.initIdentityFlow();
         this.bookmarkableRooms.setupRouting();
         this.deepLinking.setupDeepLinks();
         this.useWorkspaceLayout();
@@ -1461,474 +1459,79 @@ class SecureChat {
 
       // Identity & Members
       initIdentityFlow() {
-        this.identityModal = DOM.identityModal;
-        this.identitySelectedName = '';
-        this.identityCurrentSuggestion = '';
-        this.identityRejectedNames = [];
-
-        if (!this.identityModal) {
-          return;
-        }
-
-        const createForm = DOM.identityCreateForm;
-        if (createForm) {
-          createForm.addEventListener('submit', (event) => {
-            event.preventDefault();
-            this.handleIdentityCreateSubmit();
-          });
-        }
-
-        const returningForm = DOM.identityReturningForm;
-        if (returningForm) {
-          returningForm.addEventListener('submit', (event) => {
-            event.preventDefault();
-            this.handleIdentityReturningSubmit();
-          });
-        }
-
-        if (DOM.identityRefreshBtn) {
-          DOM.identityRefreshBtn.addEventListener('click', (event) => {
-            event.preventDefault();
-            this.tryAnotherIdentitySuggestion({ resetHistory: true });
-          });
-          DOM.identityRefreshBtn.classList.add('sr-only');
-          DOM.identityRefreshBtn.setAttribute('aria-hidden', 'true');
-          DOM.identityRefreshBtn.setAttribute('tabindex', '-1');
-        }
-
-        if (DOM.identityNameInput) {
-          DOM.identityNameInput.addEventListener('input', () => {
-            this.identitySelectedName = '';
-            this.updateJoinButtonText();
-            this.clearIdentityError();
-            this.renderIdentitySelector();
-          });
-        }
-
-        if (DOM.identityPasswordInput) {
-          DOM.identityPasswordInput.addEventListener('input', () => {
-            this.updatePasswordStrength();
-            this.clearIdentityError();
-          });
-        }
-
-        if (DOM.identityReturningPassword) {
-          DOM.identityReturningPassword.addEventListener('input', () => this.clearIdentityError());
-        }
-
-        if (DOM.identityUseNew) {
-          DOM.identityUseNew.addEventListener('click', () => {
-            this.displayIdentityMode('create');
-            this.refreshIdentitySuggestions(true);
-          });
-        }
-
-        this.refreshIdentitySuggestions(true);
+        this.entryScreen.initIdentityFlow();
       }
 
       refreshIdentitySuggestions(force = false) {
-        const container = DOM.identitySuggestions;
-        if (!container) {
-          return;
-        }
-
-        if (force) {
-          this.identityRejectedNames = [];
-          if (!DOM.identityNameInput?.value?.trim()) {
-            this.identitySelectedName = '';
-          }
-          this.identityCurrentSuggestion = '';
-        }
-
-        if (!this.identityCurrentSuggestion) {
-          this.identityCurrentSuggestion = this.generateUniqueIdentitySuggestion();
-        }
-
-        this.renderIdentitySelector();
-
-        if (DOM.identityNameInput && force) {
-          DOM.identityNameInput.value = '';
-        }
-
-        if (force) {
-          this.updateJoinButtonText();
-          this.clearIdentityError();
-        }
+        this.entryScreen.refreshIdentitySuggestions(force);
       }
 
       getEmojiForName(name) {
-        const avatar = this.computeAvatarFromName(name);
-        return avatar.emoji;
+        return this.entryScreen.getEmojiForName(name);
       }
 
       computeAvatarFromName(name) {
-        if (typeof name !== 'string' || !name) {
-          return { emoji: '🙂', color: '#4A9FD5' };
-        }
-        const emojis = ['🦊', '🦁', '🐺', '🦅', '🐉', '🦉', '🐯', '🦜', '🦋', '🐠'];
-        const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD'];
-        let hash = 0;
-        for (let i = 0; i < name.length; i++) {
-          hash = (hash << 5) - hash + name.charCodeAt(i);
-          hash |= 0;
-        }
-        hash = Math.abs(hash);
-        const emoji = emojis[hash % emojis.length];
-        const color = colors[Math.floor(hash / emojis.length) % colors.length];
-        return { emoji, color };
+        return this.entryScreen.computeAvatarFromName(name);
       }
 
       getSelectedDisplayName() {
-        const custom = DOM.identityNameInput?.value?.trim();
-        if (custom) {
-          return custom;
-        }
-        return this.identitySelectedName || '';
+        return this.entryScreen.getSelectedDisplayName();
       }
 
       updateJoinButtonText() {
-        const button = DOM.identitySubmitBtn;
-        const subtitle = DOM.identityModalSubtitle;
-        const name = this.getSelectedDisplayName();
-        if (button) {
-          button.textContent = name ? `Join as ${name}` : 'Join Secure Room';
-        }
-        if (subtitle) {
-          subtitle.textContent = name
-            ? `Secure your seat as ${name}`
-            : 'Secure your seat in this room';
-        }
+        this.entryScreen.updateJoinButtonText();
       }
 
       renderIdentitySelector() {
-        const container = DOM.identitySuggestions;
-        if (!container) {
-          return;
-        }
-
-        if (!Array.isArray(this.identityRejectedNames)) {
-          this.identityRejectedNames = [];
-        }
-
-        if (!this.identityCurrentSuggestion) {
-          this.identityCurrentSuggestion = this.generateUniqueIdentitySuggestion();
-        }
-
-        const suggestion = this.identityCurrentSuggestion || this.generateFallbackName();
-        const avatar = this.computeAvatarFromName(suggestion);
-        const isAccepted = this.identitySelectedName === suggestion;
-        const rejected = Array.isArray(this.identityRejectedNames)
-          ? this.identityRejectedNames
-          : [];
-
-        container.innerHTML = '';
-
-        const card = document.createElement('div');
-        card.className = 'name-selector-card';
-        if (isAccepted) {
-          card.dataset.state = 'selected';
-        }
-
-        const currentDisplay = document.createElement('div');
-        currentDisplay.className = 'current-name-display';
-
-        const avatarPreview = document.createElement('div');
-        avatarPreview.className = 'avatar-preview';
-        if (avatar?.color) {
-          avatarPreview.style.background = avatar.color;
-        }
-        avatarPreview.textContent = avatar?.emoji || '🙂';
-
-        const namePreview = document.createElement('div');
-        namePreview.className = 'name-preview';
-
-        const nameHeading = document.createElement('h2');
-        nameHeading.textContent = suggestion;
-
-        const nameType = document.createElement('span');
-        nameType.className = 'name-type';
-        nameType.textContent = isAccepted ? 'Selected identity' : 'Suggested identity';
-
-        namePreview.appendChild(nameHeading);
-        namePreview.appendChild(nameType);
-
-        currentDisplay.appendChild(avatarPreview);
-        currentDisplay.appendChild(namePreview);
-
-        const actions = document.createElement('div');
-        actions.className = 'name-actions';
-
-        const acceptButton = document.createElement('button');
-        acceptButton.type = 'button';
-        acceptButton.className = 'btn btn-primary';
-        const acceptIcon = document.createElement('span');
-        acceptIcon.textContent = '✓';
-        const acceptText = document.createElement('span');
-        acceptText.textContent = isAccepted ? 'Selected' : 'I like this one';
-        acceptButton.appendChild(acceptIcon);
-        acceptButton.appendChild(acceptText);
-        if (isAccepted) {
-          acceptButton.disabled = true;
-          acceptButton.setAttribute('aria-disabled', 'true');
-        }
-        acceptButton.addEventListener('click', () => this.acceptCurrentIdentitySuggestion());
-
-        const regenerateButton = document.createElement('button');
-        regenerateButton.type = 'button';
-        regenerateButton.className = 'btn btn-secondary';
-        const regenerateIcon = document.createElement('span');
-        regenerateIcon.textContent = '🎲';
-        const regenerateText = document.createElement('span');
-        regenerateText.textContent = 'Try another';
-        regenerateButton.appendChild(regenerateIcon);
-        regenerateButton.appendChild(regenerateText);
-        regenerateButton.addEventListener('click', () => this.tryAnotherIdentitySuggestion());
-
-        const customButton = document.createElement('button');
-        customButton.type = 'button';
-        customButton.className = 'btn-text';
-        customButton.textContent = 'or create custom name';
-        customButton.addEventListener('click', () => this.focusCustomIdentityInput());
-
-        actions.appendChild(acceptButton);
-        actions.appendChild(regenerateButton);
-        actions.appendChild(customButton);
-
-        const history = document.createElement('div');
-        history.className = 'rejected-names';
-        if (!rejected.length) {
-          history.hidden = true;
-        } else {
-          rejected.forEach((name) => {
-            if (typeof name !== 'string' || !name) {
-              return;
-            }
-            const pill = document.createElement('button');
-            pill.type = 'button';
-            pill.className = 'rejected-pill';
-            pill.textContent = name;
-            pill.setAttribute('aria-label', `Select ${name}`);
-            pill.addEventListener('click', () => this.selectPreviousIdentitySuggestion(name));
-            history.appendChild(pill);
-          });
-        }
-
-        card.appendChild(currentDisplay);
-        card.appendChild(actions);
-        card.appendChild(history);
-
-        container.appendChild(card);
+        this.entryScreen.renderIdentitySelector();
       }
 
       focusCustomIdentityInput() {
-        const input = DOM.identityNameInput;
-        if (input) {
-          input.focus();
-          if (typeof input.select === 'function') {
-            input.select();
-          }
-        }
-        if (this.identitySelectedName) {
-          this.identitySelectedName = '';
-          this.updateJoinButtonText();
-        }
-        this.clearIdentityError();
-        this.renderIdentitySelector();
+        this.entryScreen.focusCustomIdentityInput();
       }
 
       acceptCurrentIdentitySuggestion() {
-        const suggestion = this.identityCurrentSuggestion;
-        if (!suggestion) {
-          return;
-        }
-        this.identitySelectedName = suggestion;
-        this.updateJoinButtonText();
-        this.clearIdentityError();
-        this.renderIdentitySelector();
+        this.entryScreen.acceptCurrentIdentitySuggestion();
       }
 
       tryAnotherIdentitySuggestion(options = {}) {
-        const { resetHistory = false } = options;
-
-        const previous = this.identityCurrentSuggestion;
-        if (resetHistory) {
-          this.identityRejectedNames = [];
-        } else if (previous) {
-          const list = this.identityRejectedNames.filter((name) => name !== previous);
-          list.unshift(previous);
-          this.identityRejectedNames = list.slice(0, 6);
-        }
-
-        let next = this.generateUniqueIdentitySuggestion();
-        if (!next) {
-          next = this.generateFallbackName();
-        }
-        this.identityCurrentSuggestion = next;
-
-        if (previous && this.identitySelectedName === previous) {
-          this.identitySelectedName = '';
-        }
-
-        this.renderIdentitySelector();
-        this.updateJoinButtonText();
-        this.clearIdentityError();
+        this.entryScreen.tryAnotherIdentitySuggestion(options);
       }
 
       selectPreviousIdentitySuggestion(name) {
-        if (typeof name !== 'string' || !name) {
-          return;
-        }
-
-        this.identityRejectedNames = this.identityRejectedNames.filter((item) => item !== name);
-        this.identityCurrentSuggestion = name;
-
-        if (this.identitySelectedName !== name) {
-          this.identitySelectedName = '';
-          this.updateJoinButtonText();
-        }
-
-        this.clearIdentityError();
-        this.renderIdentitySelector();
+        this.entryScreen.selectPreviousIdentitySuggestion(name);
       }
 
       generateUniqueIdentitySuggestion() {
-        const used = new Set();
-        if (this.identityCurrentSuggestion) {
-          used.add(this.identityCurrentSuggestion);
-        }
-        if (Array.isArray(this.identityRejectedNames)) {
-          this.identityRejectedNames.forEach((name) => used.add(name));
-        }
-        if (this.identitySelectedName) {
-          used.add(this.identitySelectedName);
-        }
-
-        const custom = DOM.identityNameInput?.value?.trim();
-        if (custom) {
-          used.add(custom);
-        }
-
-        let candidate = '';
-        const attempts = 12;
-        for (let index = 0; index < attempts; index += 1) {
-          candidate = this.nameGenerator?.generate();
-          if (candidate && !used.has(candidate)) {
-            return candidate;
-          }
-        }
-
-        return candidate || this.generateFallbackName();
+        return this.entryScreen.generateUniqueIdentitySuggestion();
       }
 
       generateFallbackName() {
-        const random = Math.floor(Math.random() * 900 + 100);
-        return `SecureGuest-${random}`;
+        return this.entryScreen.generateFallbackName();
       }
 
       updatePasswordStrength() {
-        const value = DOM.identityPasswordInput?.value || '';
-        const bar = DOM.identityStrengthBar;
-        const text = DOM.identityStrengthText;
-        let score = 0;
-        if (value.length >= 8) score += 1;
-        if (value.length >= 12) score += 1;
-        if (/[A-Z]/.test(value) && /[a-z]/.test(value)) score += 1;
-        if (/\d/.test(value)) score += 1;
-        if (/[^A-Za-z0-9]/.test(value)) score += 1;
-        score = Math.min(score, 4);
-        if (bar) {
-          bar.setAttribute('data-strength', String(score));
-        }
-        if (text) {
-          const labels = ['Very weak', 'Weak', 'Okay', 'Strong', 'Excellent'];
-          text.textContent = labels[score] || 'Choose a strong password';
-        }
+        this.entryScreen.updatePasswordStrength();
       }
 
       showIdentityError(message) {
-        const error = DOM.identityError;
-        if (!error) {
-          return;
-        }
-        error.textContent = message;
-        error.hidden = false;
+        this.entryScreen.showIdentityError(message);
       }
 
       clearIdentityError() {
-        const error = DOM.identityError;
-        if (error) {
-          error.hidden = true;
-          error.textContent = '';
-        }
+        this.entryScreen.clearIdentityError();
       }
 
       showIdentityModal(mode = 'create', options = {}) {
-        if (!this.identityModal) {
-          return Promise.resolve(null);
-        }
-
-        this.identityModalMode = mode;
-        this.clearIdentityError();
-        this.displayIdentityMode(mode, options?.stored);
-        this.identityModal.hidden = false;
-
-        if (mode === 'create') {
-          this.refreshIdentitySuggestions(!this.identitySelectedName);
-          this.updatePasswordStrength();
-          setTimeout(() => DOM.identityNameInput?.focus(), 0);
-        } else {
-          setTimeout(() => DOM.identityReturningPassword?.focus(), 0);
-        }
-
-        return new Promise((resolve) => {
-          this.identityModalResolve = resolve;
-        });
+        return this.entryScreen.showIdentityModal(mode, options);
       }
 
       displayIdentityMode(mode, stored) {
-        const createSection = DOM.identityModeCreate;
-        const returningSection = DOM.identityModeReturning;
-        const title = DOM.identityModalTitle;
-        const hint = DOM.identityHint;
-        const subtitle = DOM.identityModalSubtitle;
-        this.clearIdentityError();
-
-        if (mode === 'returning') {
-          createSection?.setAttribute('hidden', '');
-          returningSection?.removeAttribute('hidden');
-          if (title) {
-            title.textContent = 'Welcome Back';
-          }
-          if (subtitle) {
-            subtitle.textContent = 'Unlock your saved identity to continue';
-          }
-          if (hint) {
-            hint.textContent = stored?.hint || 'You';
-          }
-          this.pendingStoredIdentity = stored || null;
-        } else {
-          returningSection?.setAttribute('hidden', '');
-          createSection?.removeAttribute('hidden');
-          if (title) {
-            title.textContent = 'Choose Your Identity';
-          }
-          if (subtitle) {
-            subtitle.textContent = 'Secure your seat in this room';
-          }
-          this.pendingStoredIdentity = null;
-          this.updateJoinButtonText();
-        }
+        this.entryScreen.displayIdentityMode(mode, stored);
       }
 
       hideIdentityModal(result = null) {
-        if (!this.identityModal) {
-          return;
-        }
-        this.identityModal.hidden = true;
-        if (typeof this.identityModalResolve === 'function') {
-          this.identityModalResolve(result);
-          this.identityModalResolve = null;
-        }
+        this.entryScreen.hideIdentityModal(result);
       }
 
       async handleIdentityCreateSubmit() {
@@ -1948,7 +1551,7 @@ class SecureChat {
           return;
         }
 
-        const password = DOM.identityPasswordInput?.value?.trim() || '';
+        const password = this.entryScreen.getElement('identityPasswordInput')?.value?.trim() || '';
         if (password.length < 8) {
           this.showIdentityError('Password must be at least 8 characters.');
           return;
@@ -1976,7 +1579,7 @@ class SecureChat {
           }
         }
 
-        const password = DOM.identityReturningPassword?.value?.trim() || '';
+        const password = this.entryScreen.getElement('identityReturningPassword')?.value?.trim() || '';
         if (!password) {
           this.showIdentityError('Enter the room password.');
           return;
@@ -2148,19 +1751,12 @@ class SecureChat {
 
       resetIdentityState(options = {}) {
         const { preserveLocal = false } = options;
-        if (this.identityModal && !this.identityModal.hidden) {
-          this.identityModal.hidden = true;
-        }
-        if (typeof this.identityModalResolve === 'function') {
-          this.identityModalResolve(null);
-          this.identityModalResolve = null;
-        }
+        this.entryScreen.resetIdentityState();
         if (!preserveLocal) {
           this.localIdentity = null;
         }
         this.remoteIdentity = null;
         this.identityManager = null;
-        this.pendingStoredIdentity = null;
         this.clearIdentityAnnouncement();
         this.roomMembers?.reset?.();
       }
@@ -2198,14 +1794,10 @@ class SecureChat {
 
       focusDefaultForScreen(screenId) {
         let focusTarget = null;
-        if (screenId === 'welcomeScreen') {
-          focusTarget = DOM.welcomeScreen?.querySelector('.action-buttons button');
-        } else if (screenId === 'hostScreen') {
-          focusTarget = DOM.copyInviteBtn || DOM.inviteLink;
-        } else if (screenId === 'joinScreen') {
-          focusTarget = DOM.joinStatus;
-        } else if (screenId === 'chatScreen') {
+        if (screenId === 'chatScreen') {
           focusTarget = DOM.messageInput;
+        } else if (this.entryScreen) {
+          focusTarget = this.entryScreen.getDefaultFocusTarget(screenId);
         }
 
         if (focusTarget && typeof focusTarget.focus === 'function') {
@@ -2519,11 +2111,7 @@ This invite can be used only once. Share the link privately.`;
 
       updateInviteLink(url) {
         const inviteInput = DOM.inviteLink;
-        const shareSection = DOM.shareSection;
-
-        if (shareSection) {
-          shareSection.style.display = url ? 'block' : 'none';
-        }
+        this.entryScreen.setShareSectionVisible(Boolean(url));
 
         if (!inviteInput) {
           return;
@@ -2761,7 +2349,9 @@ This invite can be used only once. Share the link privately.`;
       // Screen Navigation
       showScreen(screenId) {
         document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-        const target = DOM[screenId] || document.getElementById(screenId);
+        const target = this.entryScreen?.getScreenElement(screenId)
+          || DOM[screenId]
+          || document.getElementById(screenId);
         if (target) {
           target.classList.add('active');
           setTimeout(() => this.focusDefaultForScreen(screenId), 50);
@@ -2923,6 +2513,7 @@ This invite can be used only once. Share the link privately.`;
       showWelcome() {
         this.useLegacyLayout();
         this.setRoomContextMode(null);
+        this.entryScreen.showWelcome();
         this.showScreen('welcomeScreen');
         this.roomReentry.hide();
         this.bookmarkableRooms.updatePageTitle();
@@ -2944,14 +2535,7 @@ This invite can be used only once. Share the link privately.`;
         this.seats = { host: null, guest: null };
         this.resetIdentityState();
         this.updateFingerprintDisplay(null);
-        const roomCodeDisplay = DOM.roomCode;
-        if (roomCodeDisplay) {
-          roomCodeDisplay.textContent = this.roomId;
-        }
-        const shareSection = DOM.shareSection;
-        if (shareSection) {
-          shareSection.style.display = 'none';
-        }
+        this.entryScreen.showHost({ roomId: this.roomId });
         this.updateInviteLink('');
         this.currentShareLink = '';
         this.setWaitingBanner(false, '');
@@ -2970,12 +2554,7 @@ This invite can be used only once. Share the link privately.`;
         this.updateFingerprintDisplay(null);
         this.resetMessageCounters();
         this.resetIdentityState();
-        if (DOM.joinStatus) {
-          DOM.joinStatus.textContent = statusMessage;
-        }
-        if (DOM.joinStatusDetail) {
-          DOM.joinStatusDetail.textContent = detailMessage;
-        }
+        this.entryScreen.showJoin(statusMessage, detailMessage);
         this.bookmarkableRooms.updatePageTitle();
         this.roomReentry.hide();
         this.showScreen('joinScreen');
@@ -2984,9 +2563,9 @@ This invite can be used only once. Share the link privately.`;
       showChat() {
         console.log('Showing chat interface for room:', this.roomId);
 
-        const welcomeScreen = DOM.welcomeScreen;
-        const hostScreen = DOM.hostScreen;
-        const joinScreen = DOM.joinScreen;
+        const welcomeScreen = this.entryScreen.getScreenElement('welcomeScreen');
+        const hostScreen = this.entryScreen.getScreenElement('hostScreen');
+        const joinScreen = this.entryScreen.getScreenElement('joinScreen');
         const chatScreen = DOM.chatScreen;
 
         welcomeScreen?.classList.remove('active');
@@ -3204,7 +2783,7 @@ This invite can be used only once. Share the link privately.`;
 
         const hostMember = members.find((member) => member.isHost) || null;
         const roomName = this.getRoomDisplayName();
-        const identityHint = this.pendingStoredIdentity?.hint || null;
+        const identityHint = this.entryScreen?.pendingStoredIdentity?.hint || null;
 
         return {
           roomId: this.roomId,
@@ -3554,7 +3133,7 @@ This invite can be used only once. Share the link privately.`;
       }
 
       async copyRoomCode() {
-        const roomCodeEl = DOM.roomCode;
+        const roomCodeEl = this.entryScreen.getElement('roomCode');
         const code = roomCodeEl?.textContent;
         if (roomCodeEl && code && code !== 'Loading...') {
           const success = await this.copyText(code);
