@@ -1276,6 +1276,8 @@ class SecureChat {
         this.roomURLManager = new RoomURLManager(this);
         this.bookmarkableRooms = new BookmarkableRooms(this);
         this.deepLinking = new DeepLinking(this);
+        this.pendingReentryRequest = null;
+        this.activeRoomContextMode = null;
         this.cryptoUpdates = CryptoManager.onUpdated((update) => {
           const fingerprint = update?.fingerprint || '';
           this.latestFingerprint = fingerprint;
@@ -2163,6 +2165,31 @@ class SecureChat {
         this.roomMembers?.reset?.();
       }
 
+      setRoomContextMode(mode = null) {
+        this.activeRoomContextMode = mode;
+        if (mode === 'join') {
+          this.processPendingReentry();
+        }
+      }
+
+      processPendingReentry() {
+        if (!this.pendingReentryRequest || this.activeRoomContextMode !== 'join') {
+          return;
+        }
+
+        const { entry, params } = this.pendingReentryRequest;
+        this.pendingReentryRequest = null;
+
+        if (!entry || !entry.roomId) {
+          return;
+        }
+
+        this.useLegacyLayout();
+        this.roomId = entry.roomId;
+        const searchParams = params instanceof URLSearchParams ? params : new URLSearchParams(params);
+        this.roomReentry.show(entry, searchParams);
+      }
+
       markRemoteOffline() {
         if (this.remoteIdentity?.id) {
           this.roomMembers?.markOffline(this.remoteIdentity.id);
@@ -2787,6 +2814,8 @@ This invite can be used only once. Share the link privately.`;
         if (this.conn || this.peer || this.roomId) {
           this.disconnect();
         }
+        this.pendingReentryRequest = null;
+        this.setRoomContextMode(null);
         this.useWorkspaceLayout();
         this.roomURLManager.clearRoute();
         if (window.workspaceApp?.renderLanding) {
@@ -2795,21 +2824,35 @@ This invite can be used only once. Share the link privately.`;
       }
 
       async onRoomRoute(roomId, params = new URLSearchParams()) {
-        this.useLegacyLayout();
+        const searchParams = params instanceof URLSearchParams ? params : new URLSearchParams(params);
+
         if (!roomId) {
+          this.roomId = null;
           this.showWelcome();
           return;
         }
 
-        this.roomId = roomId;
         const entry = await this.roomHistory.find(roomId);
 
         if (entry?.myIdentity) {
-          const searchParams = params instanceof URLSearchParams ? params : new URLSearchParams(params);
-          this.roomReentry.show(entry, searchParams);
-        } else {
-          this.showJoin('Secure invite required', 'Use a new invite link from the host to enter this room.');
+          if (this.activeRoomContextMode === 'join') {
+            this.useLegacyLayout();
+            this.roomId = roomId;
+            this.pendingReentryRequest = null;
+            this.roomReentry.show(entry, searchParams);
+          } else {
+            this.pendingReentryRequest = {
+              entry,
+              params: new URLSearchParams(searchParams)
+            };
+            this.roomReentry.hide();
+          }
+          return;
         }
+
+        this.useLegacyLayout();
+        this.roomId = roomId;
+        this.showJoin('Secure invite required', 'Use a new invite link from the host to enter this room.');
       }
 
       async handleInviteRoute(roomId, inviteToken) {
@@ -2876,6 +2919,7 @@ This invite can be used only once. Share the link privately.`;
 
       showWelcome() {
         this.useLegacyLayout();
+        this.setRoomContextMode(null);
         this.showScreen('welcomeScreen');
         this.roomReentry.hide();
         this.bookmarkableRooms.updatePageTitle();
@@ -2884,6 +2928,7 @@ This invite can be used only once. Share the link privately.`;
 
       showHost(existingRoomId = null) {
         this.useLegacyLayout();
+        this.setRoomContextMode('host');
         CryptoManager.reset();
         this.latestFingerprint = '';
         this.lastAnnouncedEpoch = -1;
@@ -2915,6 +2960,7 @@ This invite can be used only once. Share the link privately.`;
 
       showJoin(statusMessage = 'Secure invite required', detailMessage = 'Open the one-time invite link shared with you to join.') {
         this.useLegacyLayout();
+        this.setRoomContextMode('join');
         CryptoManager.reset();
         this.latestFingerprint = '';
         this.lastAnnouncedEpoch = -1;
@@ -5243,6 +5289,8 @@ Current Key: ${CryptoManager.getCurrentKey() ? 'Loaded ✓' : 'Not set ✗'}</pr
         this.roomMembers?.clearActiveInvites?.();
         this.updateSimpleShareStatus('');
         this.updateFingerprintDisplay(null);
+        this.pendingReentryRequest = null;
+        this.setRoomContextMode(null);
 
         if (this.conn) this.conn.close();
         if (this.peer) this.peer.destroy();
