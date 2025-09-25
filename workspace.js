@@ -403,6 +403,7 @@ class WorkspaceApp {
     this.root = document.getElementById('workspaceRoot');
     this.content = document.getElementById('workspaceContent');
     this.heroStats = document.getElementById('workspaceHeroStats');
+    this.heroSection = this.root?.querySelector('.workspace-hero') || null;
     this.flowContainer = null;
     this.flowBody = null;
     this.librarySection = null;
@@ -579,10 +580,23 @@ class WorkspaceApp {
     const flowActive = this.flowState?.step && this.flowState.step !== 'mode';
     const shouldCondense = Boolean(this.activeWorkspaceId) || flowActive || hasWorkspaces;
 
+<<<<<<< codex/hide-top-screen-section-on-room-entry-lqb70b
+    if (this.heroSection) {
+      this.heroSection.hidden = shouldCondense;
+    }
+
+=======
+>>>>>>> main
     if (shouldCondense) {
       this.root.classList.add('workspace-app--condensed');
     } else {
       this.root.classList.remove('workspace-app--condensed');
+<<<<<<< codex/hide-top-screen-section-on-room-entry-lqb70b
+      if (this.heroSection) {
+        this.heroSection.hidden = false;
+      }
+=======
+>>>>>>> main
     }
   }
 
