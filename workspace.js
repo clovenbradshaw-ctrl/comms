@@ -704,12 +704,20 @@ class WorkspaceApp {
       this.content.innerHTML = `
         <div class="workspace-empty">
           <div class="empty-illustration">✨</div>
-          <h2>Create your first workspace</h2>
-          <p>Persistent hubs keep members, invites, and channels available even after everyone leaves.</p>
-          <button class="btn-primary large" id="startWorkspaceBtn">Start Workspace Setup</button>
+          <h2>How would you like to get started?</h2>
+          <p>Would you like to create a new workspace or join an existing one?</p>
+          <div class="workspace-empty__actions">
+            <button class="btn-primary large" data-action="create-initial-workspace">Create a new workspace</button>
+            <button class="btn-secondary large" data-action="join-initial-workspace">Join an existing workspace</button>
+          </div>
         </div>
       `;
-      this.content.querySelector('#startWorkspaceBtn')?.addEventListener('click', showCreateWorkspaceModal);
+
+      const createButton = this.content.querySelector('[data-action="create-initial-workspace"]');
+      const joinButton = this.content.querySelector('[data-action="join-initial-workspace"]');
+
+      createButton?.addEventListener('click', showCreateWorkspaceModal);
+      joinButton?.addEventListener('click', showFindWorkspaceModal);
       return;
     }
 
