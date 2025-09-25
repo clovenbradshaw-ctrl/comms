@@ -290,6 +290,41 @@
 
   <div id="reentryContainer" hidden></div>
 
+  <!-- Create Workspace Modal -->
+  <div id="createWorkspaceModal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="createWorkspaceTitle">
+    <div class="modal-content">
+      <h2 id="createWorkspaceTitle">Create New Workspace</h2>
+      <form id="createWorkspaceForm">
+        <p class="modal-error" role="alert" hidden></p>
+        <input type="text" id="workspaceName" placeholder="Workspace Name" required maxlength="50">
+        <textarea id="workspaceDesc" placeholder="Description (optional)" maxlength="200"></textarea>
+        <select id="workspaceType">
+          <option value="public">Public - Anyone can find</option>
+          <option value="private">Private - Invite only</option>
+        </select>
+        <select id="workspaceJoinRules">
+          <option value="open">Open - Anyone can join</option>
+          <option value="request">Request - Approval needed</option>
+          <option value="invite">Invite Only</option>
+        </select>
+        <div class="modal-actions">
+          <button type="submit" class="btn-primary">Create Workspace</button>
+          <button type="button" class="btn-secondary" onclick="closeModal('createWorkspaceModal')">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Find Workspace Modal -->
+  <div id="findWorkspaceModal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="findWorkspaceTitle">
+    <div class="modal-content">
+      <h2 id="findWorkspaceTitle">Find Workspaces</h2>
+      <input type="text" id="workspaceSearch" placeholder="Search or enter invite code">
+      <div id="workspaceList"></div>
+      <button class="btn-secondary" onclick="closeModal('findWorkspaceModal')">Close</button>
+    </div>
+  </div>
+
   <!-- Load PeerJS -->
   <script src="https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js"></script>
 
