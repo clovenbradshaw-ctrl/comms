@@ -239,7 +239,7 @@ function enterWorkspace(workspaceId) {
     return;
   }
 
-  const root = document.getElementById('workspaceApp');
+  const root = document.getElementById('workspaceRoot');
   if (root) {
     root.hidden = true;
   }
@@ -267,7 +267,7 @@ function leaveWorkspaceView() {
   if (view) {
     view.remove();
   }
-  const root = document.getElementById('workspaceApp');
+  const root = document.getElementById('workspaceRoot');
   if (root) {
     root.hidden = false;
   }
@@ -400,7 +400,7 @@ function formatJoinRule(rule) {
 
 class WorkspaceApp {
   constructor() {
-    this.root = document.getElementById('workspaceApp');
+    this.root = document.getElementById('workspaceRoot');
     this.content = document.getElementById('workspaceContent');
     this.heroStats = document.getElementById('workspaceHeroStats');
     this.flowContainer = null;

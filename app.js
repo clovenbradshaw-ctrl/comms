@@ -51,7 +51,7 @@ const DOM = {
   identityError: document.getElementById('identityError'),
   identitySubmitBtn: document.getElementById('identitySubmitBtn'),
   reentryContainer: document.getElementById('reentryContainer'),
-  workspaceRoot: document.getElementById('workspaceApp'),
+  workspaceRoot: document.getElementById('workspaceRoot'),
   legacyRoot: document.getElementById('legacyApp')
 };
 
