@@ -50,7 +50,9 @@ const DOM = {
   identityUseNew: document.getElementById('identityUseNew'),
   identityError: document.getElementById('identityError'),
   identitySubmitBtn: document.getElementById('identitySubmitBtn'),
-  reentryContainer: document.getElementById('reentryContainer')
+  reentryContainer: document.getElementById('reentryContainer'),
+  workspaceRoot: document.getElementById('workspaceApp'),
+  legacyRoot: document.getElementById('legacyApp')
 };
 
 const DEFAULT_FEATURE_FLAGS = {
@@ -214,7 +216,7 @@ class RoomURLManager {
         await this.app.onRoomRoute(route.roomId, route.params);
         break;
       case 'home':
-        this.app.showWelcome();
+        this.app.handleHomeRoute();
         break;
       default:
         break;
@@ -1253,6 +1255,9 @@ class SecureChat {
         this.handleSchemaRoute = null;
         this.lastMonotonicTime = 0;
         this.systemAnnouncements = DOM.systemAnnouncements;
+        this.workspaceRoot = DOM.workspaceRoot || null;
+        this.legacyRoot = DOM.legacyRoot || null;
+        this.isLegacyMode = false;
         this.inviteManager = typeof InviteManager === 'function' ? new InviteManager() : null;
         this.inviteManagerReady = this.inviteManager?.ready || Promise.resolve();
         this.pendingInvite = null;
@@ -1334,6 +1339,7 @@ class SecureChat {
         this.initIdentityFlow();
         this.bookmarkableRooms.setupRouting();
         this.deepLinking.setupDeepLinks();
+        this.useWorkspaceLayout();
         this.roomURLManager.start();
       }
 
@@ -2735,7 +2741,61 @@ This invite can be used only once. Share the link privately.`;
         }
       }
 
+      useLegacyLayout() {
+        if (this.workspaceRoot) {
+          this.workspaceRoot.setAttribute('hidden', '');
+        }
+        if (this.legacyRoot) {
+          this.legacyRoot.removeAttribute('hidden');
+        }
+        this.isLegacyMode = true;
+      }
+
+      useWorkspaceLayout() {
+        if (this.legacyRoot) {
+          this.legacyRoot.setAttribute('hidden', '');
+        }
+        if (this.workspaceRoot) {
+          this.workspaceRoot.removeAttribute('hidden');
+        }
+        this.isLegacyMode = false;
+      }
+
+      handleHomeRoute() {
+        if (this.isLegacyMode) {
+          this.showWelcome();
+          return;
+        }
+        this.useWorkspaceLayout();
+        if (window.workspaceApp?.renderLanding) {
+          window.workspaceApp.renderLanding();
+        }
+      }
+
+      enterLegacyMode(options = {}) {
+        const mode = options.mode || 'welcome';
+        if (mode === 'host') {
+          this.showHost();
+        } else if (mode === 'join') {
+          this.showJoin();
+        } else {
+          this.showWelcome();
+        }
+      }
+
+      exitToWorkspace() {
+        if (this.conn || this.peer || this.roomId) {
+          this.disconnect();
+        }
+        this.useWorkspaceLayout();
+        this.roomURLManager.clearRoute();
+        if (window.workspaceApp?.renderLanding) {
+          window.workspaceApp.renderLanding();
+        }
+      }
+
       async onRoomRoute(roomId, params = new URLSearchParams()) {
+        this.useLegacyLayout();
         if (!roomId) {
           this.showWelcome();
           return;
@@ -2753,6 +2813,7 @@ This invite can be used only once. Share the link privately.`;
       }
 
       async handleInviteRoute(roomId, inviteToken) {
+        this.useLegacyLayout();
         if (!inviteToken) {
           this.showJoin('Invite unavailable', 'Missing invite token in the URL.');
           return;
@@ -2778,6 +2839,7 @@ This invite can be used only once. Share the link privately.`;
       }
 
       async handleEncodedInvite(token) {
+        this.useLegacyLayout();
         if (!token) {
           return;
         }
@@ -2798,6 +2860,7 @@ This invite can be used only once. Share the link privately.`;
       }
 
       async handleLegacyInvite(route) {
+        this.useLegacyLayout();
         if (!route) {
           return;
         }
@@ -2812,6 +2875,7 @@ This invite can be used only once. Share the link privately.`;
       }
 
       showWelcome() {
+        this.useLegacyLayout();
         this.showScreen('welcomeScreen');
         this.roomReentry.hide();
         this.bookmarkableRooms.updatePageTitle();
@@ -2819,6 +2883,7 @@ This invite can be used only once. Share the link privately.`;
       }
 
       showHost(existingRoomId = null) {
+        this.useLegacyLayout();
         CryptoManager.reset();
         this.latestFingerprint = '';
         this.lastAnnouncedEpoch = -1;
@@ -2849,6 +2914,7 @@ This invite can be used only once. Share the link privately.`;
       }
 
       showJoin(statusMessage = 'Secure invite required', detailMessage = 'Open the one-time invite link shared with you to join.') {
+        this.useLegacyLayout();
         CryptoManager.reset();
         this.latestFingerprint = '';
         this.lastAnnouncedEpoch = -1;

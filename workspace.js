@@ -107,6 +107,7 @@ class WorkspaceApp {
       return;
     }
     this.updateHeroStats();
+    const quickCard = this.renderQuickRoomCard();
     if (!this.state.workspaces.length) {
       this.elements.content.innerHTML = `
         <div class="workspace-empty">
@@ -115,8 +116,10 @@ class WorkspaceApp {
           <p>Persistent hubs keep members, invites, and channels available even after everyone leaves.</p>
           <button class="btn-primary large" id="emptyCreateBtn">Start Workspace Setup</button>
         </div>
+        ${quickCard}
       `;
       document.getElementById('emptyCreateBtn')?.addEventListener('click', () => this.showCreation());
+      this.bindQuickRoomActions();
       return;
     }
 
@@ -158,7 +161,10 @@ class WorkspaceApp {
       `;
     }).join('');
 
-    this.elements.content.innerHTML = `<div class="workspace-grid">${cards}</div>`;
+    this.elements.content.innerHTML = `
+      <div class="workspace-grid">${cards}</div>
+      ${quickCard}
+    `;
     this.elements.content.querySelectorAll('[data-action="open"]').forEach(button => {
       button.addEventListener('click', event => {
         event.stopPropagation();
@@ -171,6 +177,37 @@ class WorkspaceApp {
         const id = card.getAttribute('data-id');
         this.openWorkspace(id);
       });
+    });
+    this.bindQuickRoomActions();
+  }
+
+  renderQuickRoomCard() {
+    return `
+      <section class="quick-room-card" aria-label="Quick secure room options">
+        <h3>Need a one-off secure room?</h3>
+        <p>Launch the classic Secure Chat experience for instant, end-to-end encrypted conversations.</p>
+        <div class="quick-room-actions">
+          <button class="btn btn-primary" id="quickRoomHost">Create Secure Room</button>
+          <button class="btn btn-secondary" id="quickRoomJoin">Join with Invite</button>
+          <button class="btn btn-ghost" id="quickRoomOpen">Open Secure Chat</button>
+        </div>
+      </section>
+    `;
+  }
+
+  bindQuickRoomActions() {
+    const hostBtn = this.elements.content?.querySelector('#quickRoomHost');
+    const joinBtn = this.elements.content?.querySelector('#quickRoomJoin');
+    const openBtn = this.elements.content?.querySelector('#quickRoomOpen');
+
+    hostBtn?.addEventListener('click', () => {
+      window.App?.enterLegacyMode?.({ mode: 'host' });
+    });
+    joinBtn?.addEventListener('click', () => {
+      window.App?.enterLegacyMode?.({ mode: 'join' });
+    });
+    openBtn?.addEventListener('click', () => {
+      window.App?.enterLegacyMode?.({ mode: 'welcome' });
     });
   }
 
