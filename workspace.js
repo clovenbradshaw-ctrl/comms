@@ -403,6 +403,7 @@ class WorkspaceApp {
     this.root = document.getElementById('workspaceRoot');
     this.content = document.getElementById('workspaceContent');
     this.heroStats = document.getElementById('workspaceHeroStats');
+    this.heroSection = this.root?.querySelector('.workspace-hero') || null;
     this.flowContainer = null;
     this.flowBody = null;
     this.librarySection = null;
@@ -468,6 +469,7 @@ class WorkspaceApp {
     this.renderFlowShell();
     this.renderWorkspaceList(this.workspaces);
     this.updateHeroStats();
+    this.updateHeroVisibility();
   }
 
   renderFlowShell() {
@@ -566,6 +568,30 @@ class WorkspaceApp {
     }
 
     this.renderFlowBody();
+    this.updateHeroVisibility();
+  }
+
+  updateHeroVisibility() {
+    if (!this.root) {
+      return;
+    }
+
+    const hasWorkspaces = Array.isArray(this.workspaces) && this.workspaces.length > 0;
+    const flowActive = this.flowState?.step && this.flowState.step !== 'mode';
+    const shouldCondense = Boolean(this.activeWorkspaceId) || flowActive || hasWorkspaces;
+
+    if (this.heroSection) {
+      this.heroSection.hidden = shouldCondense;
+    }
+
+    if (shouldCondense) {
+      this.root.classList.add('workspace-app--condensed');
+    } else {
+      this.root.classList.remove('workspace-app--condensed');
+      if (this.heroSection) {
+        this.heroSection.hidden = false;
+      }
+    }
   }
 
   renderFlowBody() {
@@ -1364,6 +1390,7 @@ class WorkspaceApp {
     this.workspaces = listWorkspaces();
     this.renderWorkspaceList(this.workspaces);
     this.updateHeroStats();
+    this.updateHeroVisibility();
   }
 
   resetFlow() {

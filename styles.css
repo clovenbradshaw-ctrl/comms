@@ -3063,6 +3063,14 @@
   padding: 2rem 1.5rem 4rem;
 }
 
+.workspace-app--condensed {
+  padding-top: 1.5rem;
+}
+
+.workspace-app--condensed .workspace-hero {
+  display: none;
+}
+
 .workspace-hero {
   background: linear-gradient(135deg, #1d4ed8, #3b82f6);
   color: white;
