@@ -36,27 +36,18 @@ const DOM = {
   identityCreateForm: document.getElementById('identityCreateForm'),
   identitySuggestions: document.getElementById('identitySuggestions'),
   identityNameInput: document.getElementById('identityNameInput'),
+  identityRefreshBtn: document.getElementById('identityRefreshBtn'),
   identityPasswordInput: document.getElementById('identityPasswordInput'),
   identityStrengthBar: document.getElementById('identityStrengthBar'),
   identityStrengthText: document.getElementById('identityStrengthText'),
-  identityPasswordSection: document.getElementById('identityPasswordSection'),
-  identityStepName: document.getElementById('identityStepName'),
-  identityStepPassword: document.getElementById('identityStepPassword'),
   identityModeCreate: document.getElementById('identityModeCreate'),
   identityModeReturning: document.getElementById('identityModeReturning'),
   identityReturningForm: document.getElementById('identityReturningForm'),
   identityReturningPassword: document.getElementById('identityReturningPassword'),
   identityModalTitle: document.getElementById('identityModalTitle'),
   identityModalSubtitle: document.getElementById('identityModalSubtitle'),
-  identityShowReturning: document.getElementById('identityShowReturning'),
-  identityReturningTitle: document.getElementById('identityReturningTitle'),
-  identityReturningSubtitle: document.getElementById('identityReturningSubtitle'),
-  identityReturningName: document.getElementById('identityReturningName'),
-  identityReturningAvatar: document.getElementById('identityReturningAvatar'),
-  identityReturningLastSeen: document.getElementById('identityReturningLastSeen'),
-  identityJoinNew: document.getElementById('identityJoinNew'),
-  identityForgotPassword: document.getElementById('identityForgotPassword'),
-  identityReturningSubmitBtn: document.getElementById('identityReturningSubmitBtn'),
+  identityHint: document.getElementById('identityHint'),
+  identityUseNew: document.getElementById('identityUseNew'),
   identityError: document.getElementById('identityError'),
   identitySubmitBtn: document.getElementById('identitySubmitBtn'),
   reentryContainer: document.getElementById('reentryContainer')
@@ -1487,10 +1478,20 @@ class SecureChat {
           });
         }
 
+        if (DOM.identityRefreshBtn) {
+          DOM.identityRefreshBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            this.tryAnotherIdentitySuggestion({ resetHistory: true });
+          });
+          DOM.identityRefreshBtn.classList.add('sr-only');
+          DOM.identityRefreshBtn.setAttribute('aria-hidden', 'true');
+          DOM.identityRefreshBtn.setAttribute('tabindex', '-1');
+        }
+
         if (DOM.identityNameInput) {
           DOM.identityNameInput.addEventListener('input', () => {
             this.identitySelectedName = '';
-            this.updateIdentityState();
+            this.updateJoinButtonText();
             this.clearIdentityError();
             this.renderIdentitySelector();
           });
@@ -1499,7 +1500,6 @@ class SecureChat {
         if (DOM.identityPasswordInput) {
           DOM.identityPasswordInput.addEventListener('input', () => {
             this.updatePasswordStrength();
-            this.updateIdentityState();
             this.clearIdentityError();
           });
         }
@@ -1508,27 +1508,10 @@ class SecureChat {
           DOM.identityReturningPassword.addEventListener('input', () => this.clearIdentityError());
         }
 
-        if (DOM.identityShowReturning) {
-          DOM.identityShowReturning.addEventListener('click', (event) => {
-            event.preventDefault();
-            this.identityModalMode = 'returning';
-            this.showReturningIdentityFromCreate();
-          });
-        }
-
-        if (DOM.identityJoinNew) {
-          DOM.identityJoinNew.addEventListener('click', (event) => {
-            event.preventDefault();
-            this.identityModalMode = 'create';
+        if (DOM.identityUseNew) {
+          DOM.identityUseNew.addEventListener('click', () => {
             this.displayIdentityMode('create');
             this.refreshIdentitySuggestions(true);
-          });
-        }
-
-        if (DOM.identityForgotPassword) {
-          DOM.identityForgotPassword.addEventListener('click', (event) => {
-            event.preventDefault();
-            this.showIdentityError('Passwords never leave this device. Join as someone new to continue.');
           });
         }
 
@@ -1560,7 +1543,7 @@ class SecureChat {
         }
 
         if (force) {
-          this.updateIdentityState();
+          this.updateJoinButtonText();
           this.clearIdentityError();
         }
       }
@@ -1587,57 +1570,6 @@ class SecureChat {
         return { emoji, color };
       }
 
-      formatRelativeTime(timestamp) {
-        if (!timestamp) {
-          return 'just now';
-        }
-        const now = Date.now();
-        let diff = now - timestamp;
-        if (!Number.isFinite(diff) || diff < 0) {
-          diff = 0;
-        }
-        const minutes = Math.floor(diff / 60000);
-        if (minutes <= 0) {
-          return 'just now';
-        }
-        if (minutes === 1) {
-          return '1 minute ago';
-        }
-        if (minutes < 60) {
-          return `${minutes} minutes ago`;
-        }
-        const hours = Math.floor(minutes / 60);
-        if (hours === 1) {
-          return '1 hour ago';
-        }
-        if (hours < 24) {
-          return `${hours} hours ago`;
-        }
-        const days = Math.floor(hours / 24);
-        if (days === 1) {
-          return '1 day ago';
-        }
-        if (days < 7) {
-          return `${days} days ago`;
-        }
-        const weeks = Math.floor(days / 7);
-        if (weeks === 1) {
-          return '1 week ago';
-        }
-        if (weeks < 4) {
-          return `${weeks} weeks ago`;
-        }
-        const months = Math.floor(days / 30);
-        if (months === 1) {
-          return '1 month ago';
-        }
-        if (months < 12) {
-          return `${months} months ago`;
-        }
-        const years = Math.floor(days / 365);
-        return years === 1 ? '1 year ago' : `${years} years ago`;
-      }
-
       getSelectedDisplayName() {
         const custom = DOM.identityNameInput?.value?.trim();
         if (custom) {
@@ -1646,53 +1578,17 @@ class SecureChat {
         return this.identitySelectedName || '';
       }
 
-      updateIdentityState() {
+      updateJoinButtonText() {
         const button = DOM.identitySubmitBtn;
         const subtitle = DOM.identityModalSubtitle;
-        const passwordInput = DOM.identityPasswordInput;
-        const passwordSection = DOM.identityPasswordSection;
-        const stepName = DOM.identityStepName;
-        const stepPassword = DOM.identityStepPassword;
-        const bar = DOM.identityStrengthBar;
-        const text = DOM.identityStrengthText;
         const name = this.getSelectedDisplayName();
-        const hasName = Boolean(name);
-        const passwordValue = passwordInput?.value || '';
-
-        if (passwordInput) {
-          if (hasName) {
-            passwordInput.disabled = false;
-            passwordSection?.classList.remove('disabled');
-            stepPassword?.classList.add('active');
-            stepName?.classList.add('completed');
-          } else {
-            if (passwordValue) {
-              passwordInput.value = '';
-            }
-            passwordInput.disabled = true;
-            passwordSection?.classList.add('disabled');
-            stepPassword?.classList.remove('active');
-            stepName?.classList.remove('completed');
-            if (bar) {
-              bar.classList.add('hidden');
-              bar.style.setProperty('--strength', '0%');
-            }
-            if (text) {
-              text.classList.add('hidden');
-              text.textContent = 'Choose a strong password';
-            }
-          }
-        }
-
         if (button) {
-          button.disabled = !(hasName && passwordValue.length >= 8);
-          button.textContent = hasName ? `Continue as ${name}` : 'Continue to Room';
+          button.textContent = name ? `Join as ${name}` : 'Join Secure Room';
         }
-
         if (subtitle) {
-          subtitle.textContent = hasName
-            ? `Secure your identity as ${name}`
-            : 'Create your identity for this room';
+          subtitle.textContent = name
+            ? `Secure your seat as ${name}`
+            : 'Secure your seat in this room';
         }
       }
 
@@ -1713,42 +1609,56 @@ class SecureChat {
         const suggestion = this.identityCurrentSuggestion || this.generateFallbackName();
         const avatar = this.computeAvatarFromName(suggestion);
         const isAccepted = this.identitySelectedName === suggestion;
+        const rejected = Array.isArray(this.identityRejectedNames)
+          ? this.identityRejectedNames
+          : [];
 
         container.innerHTML = '';
 
         const card = document.createElement('div');
-        card.className = 'suggested-name-card';
+        card.className = 'name-selector-card';
         if (isAccepted) {
           card.dataset.state = 'selected';
         }
 
-        const preview = document.createElement('div');
-        preview.className = 'name-preview';
+        const currentDisplay = document.createElement('div');
+        currentDisplay.className = 'current-name-display';
 
-        const avatarPreview = document.createElement('span');
+        const avatarPreview = document.createElement('div');
         avatarPreview.className = 'avatar-preview';
-        avatarPreview.textContent = avatar?.emoji || '🙂';
         if (avatar?.color) {
           avatarPreview.style.background = avatar.color;
-          avatarPreview.style.color = '#fff';
-        } else {
-          avatarPreview.style.color = '';
         }
+        avatarPreview.textContent = avatar?.emoji || '🙂';
 
-        const nameText = document.createElement('span');
-        nameText.className = 'name-text';
-        nameText.textContent = suggestion;
+        const namePreview = document.createElement('div');
+        namePreview.className = 'name-preview';
 
-        preview.appendChild(avatarPreview);
-        preview.appendChild(nameText);
+        const nameHeading = document.createElement('h2');
+        nameHeading.textContent = suggestion;
+
+        const nameType = document.createElement('span');
+        nameType.className = 'name-type';
+        nameType.textContent = isAccepted ? 'Selected identity' : 'Suggested identity';
+
+        namePreview.appendChild(nameHeading);
+        namePreview.appendChild(nameType);
+
+        currentDisplay.appendChild(avatarPreview);
+        currentDisplay.appendChild(namePreview);
 
         const actions = document.createElement('div');
         actions.className = 'name-actions';
 
         const acceptButton = document.createElement('button');
         acceptButton.type = 'button';
-        acceptButton.className = 'btn-primary';
-        acceptButton.textContent = isAccepted ? 'Selected' : 'Use this name';
+        acceptButton.className = 'btn btn-primary';
+        const acceptIcon = document.createElement('span');
+        acceptIcon.textContent = '✓';
+        const acceptText = document.createElement('span');
+        acceptText.textContent = isAccepted ? 'Selected' : 'I like this one';
+        acceptButton.appendChild(acceptIcon);
+        acceptButton.appendChild(acceptText);
         if (isAccepted) {
           acceptButton.disabled = true;
           acceptButton.setAttribute('aria-disabled', 'true');
@@ -1757,14 +1667,47 @@ class SecureChat {
 
         const regenerateButton = document.createElement('button');
         regenerateButton.type = 'button';
-        regenerateButton.className = 'btn-secondary';
-        regenerateButton.textContent = 'Try another';
+        regenerateButton.className = 'btn btn-secondary';
+        const regenerateIcon = document.createElement('span');
+        regenerateIcon.textContent = '🎲';
+        const regenerateText = document.createElement('span');
+        regenerateText.textContent = 'Try another';
+        regenerateButton.appendChild(regenerateIcon);
+        regenerateButton.appendChild(regenerateText);
         regenerateButton.addEventListener('click', () => this.tryAnotherIdentitySuggestion());
+
+        const customButton = document.createElement('button');
+        customButton.type = 'button';
+        customButton.className = 'btn-text';
+        customButton.textContent = 'or create custom name';
+        customButton.addEventListener('click', () => this.focusCustomIdentityInput());
 
         actions.appendChild(acceptButton);
         actions.appendChild(regenerateButton);
-        card.appendChild(preview);
+        actions.appendChild(customButton);
+
+        const history = document.createElement('div');
+        history.className = 'rejected-names';
+        if (!rejected.length) {
+          history.hidden = true;
+        } else {
+          rejected.forEach((name) => {
+            if (typeof name !== 'string' || !name) {
+              return;
+            }
+            const pill = document.createElement('button');
+            pill.type = 'button';
+            pill.className = 'rejected-pill';
+            pill.textContent = name;
+            pill.setAttribute('aria-label', `Select ${name}`);
+            pill.addEventListener('click', () => this.selectPreviousIdentitySuggestion(name));
+            history.appendChild(pill);
+          });
+        }
+
+        card.appendChild(currentDisplay);
         card.appendChild(actions);
+        card.appendChild(history);
 
         container.appendChild(card);
       }
@@ -1779,7 +1722,7 @@ class SecureChat {
         }
         if (this.identitySelectedName) {
           this.identitySelectedName = '';
-          this.updateIdentityState();
+          this.updateJoinButtonText();
         }
         this.clearIdentityError();
         this.renderIdentitySelector();
@@ -1791,10 +1734,9 @@ class SecureChat {
           return;
         }
         this.identitySelectedName = suggestion;
-        this.updateIdentityState();
+        this.updateJoinButtonText();
         this.clearIdentityError();
         this.renderIdentitySelector();
-        setTimeout(() => DOM.identityPasswordInput?.focus(), 0);
       }
 
       tryAnotherIdentitySuggestion(options = {}) {
@@ -1820,41 +1762,25 @@ class SecureChat {
         }
 
         this.renderIdentitySelector();
-        this.updateIdentityState();
+        this.updateJoinButtonText();
         this.clearIdentityError();
       }
 
-      async showReturningIdentityFromCreate() {
-        this.clearIdentityError();
-
-        if (!this.roomId) {
-          this.showIdentityError('Join a room before unlocking a saved identity.');
+      selectPreviousIdentitySuggestion(name) {
+        if (typeof name !== 'string' || !name) {
           return;
         }
 
-        if (!this.identityManager || this.identityManager.roomId !== this.roomId) {
-          try {
-            this.identityManager = new RoomIdentity(this.roomId);
-          } catch (error) {
-            console.warn('Unable to initialise identity manager for returning flow.', error);
-            this.showIdentityError('Identity service unavailable in this browser.');
-            return;
-          }
+        this.identityRejectedNames = this.identityRejectedNames.filter((item) => item !== name);
+        this.identityCurrentSuggestion = name;
+
+        if (this.identitySelectedName !== name) {
+          this.identitySelectedName = '';
+          this.updateJoinButtonText();
         }
 
-        try {
-          const stored = await this.identityManager.storage.getRoomIdentity(this.roomId);
-          if (stored) {
-            this.displayIdentityMode('returning', stored);
-            this.identityModalMode = 'returning';
-            setTimeout(() => DOM.identityReturningPassword?.focus(), 0);
-          } else {
-            this.showIdentityError('No saved identity found on this device yet.');
-          }
-        } catch (error) {
-          console.warn('Unable to load stored identity for returning flow.', error);
-          this.showIdentityError('Unable to load saved identity for this room.');
-        }
+        this.clearIdentityError();
+        this.renderIdentitySelector();
       }
 
       generateUniqueIdentitySuggestion() {
@@ -1902,25 +1828,13 @@ class SecureChat {
         if (/\d/.test(value)) score += 1;
         if (/[^A-Za-z0-9]/.test(value)) score += 1;
         score = Math.min(score, 4);
-        if (!bar || !text) {
-          return;
+        if (bar) {
+          bar.setAttribute('data-strength', String(score));
         }
-
-        if (!value) {
-          bar.classList.add('hidden');
-          bar.style.setProperty('--strength', '0%');
-          text.classList.add('hidden');
-          text.textContent = 'Choose a strong password';
-          return;
+        if (text) {
+          const labels = ['Very weak', 'Weak', 'Okay', 'Strong', 'Excellent'];
+          text.textContent = labels[score] || 'Choose a strong password';
         }
-
-        const percents = [0, 25, 50, 75, 100];
-        const labels = ['Very weak', 'Weak', 'Okay', 'Strong', 'Excellent'];
-
-        bar.classList.remove('hidden');
-        text.classList.remove('hidden');
-        bar.style.setProperty('--strength', `${percents[score] ?? 0}%`);
-        text.textContent = labels[score] || 'Choose a strong password';
       }
 
       showIdentityError(message) {
@@ -1953,7 +1867,6 @@ class SecureChat {
         if (mode === 'create') {
           this.refreshIdentitySuggestions(!this.identitySelectedName);
           this.updatePasswordStrength();
-          this.updateIdentityState();
           setTimeout(() => DOM.identityNameInput?.focus(), 0);
         } else {
           setTimeout(() => DOM.identityReturningPassword?.focus(), 0);
@@ -1968,59 +1881,34 @@ class SecureChat {
         const createSection = DOM.identityModeCreate;
         const returningSection = DOM.identityModeReturning;
         const title = DOM.identityModalTitle;
+        const hint = DOM.identityHint;
         const subtitle = DOM.identityModalSubtitle;
-        const returningTitle = DOM.identityReturningTitle;
-        const returningSubtitle = DOM.identityReturningSubtitle;
-        const returningName = DOM.identityReturningName;
-        const returningAvatar = DOM.identityReturningAvatar;
-        const returningLastSeen = DOM.identityReturningLastSeen;
         this.clearIdentityError();
 
         if (mode === 'returning') {
           createSection?.setAttribute('hidden', '');
           returningSection?.removeAttribute('hidden');
-          const preview = stored?.preview || {};
-          if (returningTitle) {
-            returningTitle.textContent = 'Welcome Back!';
+          if (title) {
+            title.textContent = 'Welcome Back';
           }
-          if (returningSubtitle) {
-            returningSubtitle.textContent = 'We found your previous identity';
+          if (subtitle) {
+            subtitle.textContent = 'Unlock your saved identity to continue';
           }
-          if (returningName) {
-            returningName.textContent = preview.displayName || stored?.hint || 'Saved identity';
-          }
-          if (returningAvatar) {
-            const emoji = preview?.avatar?.emoji || '🙂';
-            returningAvatar.textContent = emoji;
-            if (preview?.avatar?.color) {
-              returningAvatar.style.background = preview.avatar.color;
-              returningAvatar.style.color = '#fff';
-            } else {
-              returningAvatar.style.background = '';
-              returningAvatar.style.color = '';
-            }
-          }
-          if (returningLastSeen) {
-            if (preview?.lastSeen) {
-              returningLastSeen.hidden = false;
-              returningLastSeen.textContent = `Last here ${this.formatRelativeTime(preview.lastSeen)}`;
-            } else {
-              returningLastSeen.hidden = true;
-              returningLastSeen.textContent = '';
-            }
+          if (hint) {
+            hint.textContent = stored?.hint || 'You';
           }
           this.pendingStoredIdentity = stored || null;
         } else {
           returningSection?.setAttribute('hidden', '');
           createSection?.removeAttribute('hidden');
           if (title) {
-            title.textContent = 'Join Room';
+            title.textContent = 'Choose Your Identity';
           }
           if (subtitle) {
-            subtitle.textContent = 'Create your identity for this room';
+            subtitle.textContent = 'Secure your seat in this room';
           }
           this.pendingStoredIdentity = null;
-          this.updateIdentityState();
+          this.updateJoinButtonText();
         }
       }
 

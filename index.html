@@ -229,102 +229,51 @@
 
       <div id="identityModal" class="identity-modal" role="dialog" aria-modal="true" aria-labelledby="identityModalTitle" hidden>
         <div class="identity-dialog">
+          <div class="identity-header">
+            <h3 id="identityModalTitle">Choose Your Identity</h3>
+            <p id="identityModalSubtitle">Secure your seat in this room</p>
+          </div>
+
           <div id="identityModeCreate" class="identity-section">
-            <form id="identityCreateForm" class="identity-setup" novalidate>
-              <div class="setup-card">
-                <div class="card-header">
-                  <h1 id="identityModalTitle">Join Room</h1>
-                  <p id="identityModalSubtitle">Create your identity for this room</p>
+            <form id="identityCreateForm" novalidate>
+              <div class="identity-block">
+                <h4>Display Name</h4>
+                <p class="help-text">Pick a generated name or create your own</p>
+                <div id="identitySuggestions" class="name-suggestions"></div>
+                <div class="custom-name-option">
+                  <input type="text" id="identityNameInput" maxlength="30" placeholder="Or type your own…" autocomplete="off">
+                  <button type="button" id="identityRefreshBtn" class="refresh-btn">🎲 New suggestions</button>
                 </div>
+              </div>
 
-                <div class="setup-step active" id="identityStepName">
-                  <label class="step-label" for="identityNameInput">
-                    <span class="step-number">1</span>
-                    Choose your display name
-                  </label>
-                  <div class="name-selector">
-                    <div id="identitySuggestions" class="name-suggestions"></div>
-                    <details class="custom-name-section" id="identityCustomSection">
-                      <summary>Prefer a custom name?</summary>
-                      <input
-                        type="text"
-                        id="identityNameInput"
-                        maxlength="30"
-                        placeholder="Enter your own name"
-                        autocomplete="off"
-                      />
-                    </details>
+              <div class="identity-block">
+                <h4>Password</h4>
+                <p class="help-text">Create a password to rejoin this room later</p>
+                <div class="password-input-group">
+                  <input type="password" id="identityPasswordInput" placeholder="Create room password" autocomplete="new-password" required>
+                  <div class="password-strength">
+                    <div id="identityStrengthBar" class="strength-bar" data-strength="0"></div>
+                    <span id="identityStrengthText" class="strength-text">Choose a strong password</span>
                   </div>
                 </div>
+              </div>
 
-                <div class="setup-step" id="identityStepPassword">
-                  <label class="step-label" for="identityPasswordInput">
-                    <span class="step-number">2</span>
-                    Secure your identity
-                  </label>
-                  <div class="password-section disabled" id="identityPasswordSection">
-                    <p class="help-text">This password lets you rejoin as the same person</p>
-                    <div class="password-input-wrapper">
-                      <input
-                        type="password"
-                        id="identityPasswordInput"
-                        placeholder="Create a password"
-                        autocomplete="new-password"
-                        disabled
-                        required
-                      />
-                    </div>
-                    <div class="password-strength hidden" id="identityStrengthBar"></div>
-                    <span class="strength-text hidden" id="identityStrengthText">Choose a strong password</span>
-                  </div>
-                </div>
-
-                <button type="submit" class="btn-primary large" id="identitySubmitBtn" disabled>
-                  Continue to Room
-                </button>
-
-                <div class="alternate-action">
-                  <button type="button" class="link-button" id="identityShowReturning">
-                    Already joined this room before?
-                  </button>
-                </div>
+              <div class="identity-actions">
+                <button type="submit" class="btn btn-primary" id="identitySubmitBtn">Join Secure Room</button>
               </div>
             </form>
           </div>
 
           <div id="identityModeReturning" class="identity-section" hidden>
-            <form id="identityReturningForm" class="identity-unlock" novalidate>
-              <div class="unlock-card">
-                <div class="card-header">
-                  <h1 id="identityReturningTitle">Welcome Back!</h1>
-                  <p id="identityReturningSubtitle">We found your previous identity</p>
-                </div>
-
-                <div class="identity-preview" aria-live="polite">
-                  <div class="avatar-large" id="identityReturningAvatar">🙂</div>
-                  <h2 id="identityReturningName">Saved identity</h2>
-                  <p class="last-seen" id="identityReturningLastSeen" hidden></p>
-                </div>
-
-                <div class="unlock-form">
-                  <label for="identityReturningPassword">Enter your password to continue</label>
-                  <input
-                    type="password"
-                    id="identityReturningPassword"
-                    placeholder="Your password"
-                    autocomplete="current-password"
-                    required
-                  />
-                  <button type="submit" class="btn-primary large" id="identityReturningSubmitBtn">
-                    Rejoin Room
-                  </button>
-                </div>
-
-                <div class="alternate-actions">
-                  <button type="button" class="link-button" id="identityJoinNew">Join as someone new</button>
-                  <span class="separator" aria-hidden="true">•</span>
-                  <button type="button" class="link-button" id="identityForgotPassword">Forgot password?</button>
-                </div>
+            <form id="identityReturningForm" novalidate>
+              <div class="identity-block">
+                <h4>Welcome Back</h4>
+                <p class="help-text">Enter your password to rejoin as <strong id="identityHint">You</strong></p>
+                <input type="password" id="identityReturningPassword" placeholder="Enter your room password" autocomplete="current-password" required>
+              </div>
+              <div class="identity-actions">
+                <button type="submit" class="btn btn-primary">Rejoin Room</button>
+                <button type="button" class="btn btn-secondary" id="identityUseNew">Join as someone new</button>
               </div>
             </form>
           </div>
@@ -341,7 +290,7 @@
   <script src="https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js"></script>
 
   <script src="lib/identity.js"></script>
-  <script src="lib/events.js"></script>
+    <script src="lib/events.js"></script>
   <script src="lib/state.js"></script>
   <script src="lib/storage.js"></script>
   <script src="lib/crypto.js"></script>
