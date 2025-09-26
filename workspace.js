@@ -153,8 +153,13 @@ async function ensureWorkspaceMemberProfile(workspaceId, options = {}) {
   const {
     workspaceName = '',
     forceNew = false,
-    verify = false
+    verify = false,
+    password: providedPasswordRaw = ''
   } = options;
+
+  const providedPassword = typeof providedPasswordRaw === 'string'
+    ? providedPasswordRaw.trim()
+    : '';
 
   if (!workspaceId) {
     throw new Error('workspaceId is required.');
@@ -179,13 +184,26 @@ async function ensureWorkspaceMemberProfile(workspaceId, options = {}) {
   }
 
   if (!profile.passwordDigest || forceNew) {
-    const password = await captureWorkspacePassword({ workspaceName, mode: 'create' });
+    const password = providedPassword || await captureWorkspacePassword({ workspaceName, mode: 'create' });
     profile.passwordDigest = await hashWorkspaceSecret(password);
     profile.passwordCreatedAt = now;
     profile.lastVerifiedAt = now;
   } else if (verify) {
     let verified = false;
     let attempts = 0;
+
+    if (providedPassword) {
+      const digest = await hashWorkspaceSecret(providedPassword);
+      if (digest === profile.passwordDigest) {
+        verified = true;
+        profile.lastVerifiedAt = Date.now();
+      } else {
+        const error = new Error('Unable to verify workspace credentials.');
+        error.code = 'PASSWORD_INVALID';
+        throw error;
+      }
+    }
+
     while (!verified && attempts < 3) {
       let password;
       try {
@@ -1274,7 +1292,8 @@ class WorkspaceApp {
     const creatorPeerId = window.App?.peer?.id || null;
     const profile = await ensureWorkspaceMemberProfile(workspaceId, {
       workspaceName: draft.name || workspaceId,
-      forceNew: true
+      forceNew: true,
+      password
     });
 
     const workspace = ensureWorkspaceShape({
@@ -1535,10 +1554,11 @@ class WorkspaceApp {
     this.clearFormErrors(form);
     const passwordRequired = Boolean(workspace.security?.passwordEnabled && workspace.security?.passwordDigest);
     const passwordInput = form.querySelector('#joinWorkspacePassword');
+    const passwordValue = passwordInput?.value.trim() || '';
     const errorEl = form.querySelector('#joinSecurityError');
     const submitButton = form.querySelector('button[type="submit"]');
 
-    if (passwordRequired && !passwordInput?.value.trim()) {
+    if (passwordRequired && !passwordValue) {
       this.setFieldError(form, 'workspacePassword', 'Password is required to join this workspace.');
       passwordInput?.focus();
       return;
@@ -1548,7 +1568,7 @@ class WorkspaceApp {
 
     try {
       if (passwordRequired && passwordInput) {
-        const digest = await hashWorkspaceSecret(passwordInput.value.trim());
+        const digest = await hashWorkspaceSecret(passwordValue);
         if (digest !== workspace.security?.passwordDigest) {
           this.setFieldError(form, 'workspacePassword', 'That password is incorrect.');
           passwordInput.value = '';
@@ -1557,7 +1577,7 @@ class WorkspaceApp {
         }
       }
 
-      await this.finalizeJoin(workspace);
+      await this.finalizeJoin(workspace, passwordValue);
     } catch (error) {
       console.warn('Unable to join workspace', error);
       if (errorEl) {
@@ -1576,10 +1596,11 @@ class WorkspaceApp {
   }
 
   // Apply membership changes locally once a join flow is successful.
-  async finalizeJoin(workspace) {
+  async finalizeJoin(workspace, providedPassword = '') {
     const profile = await ensureWorkspaceMemberProfile(workspace.id, {
       workspaceName: workspace.name || workspace.id,
-      verify: true
+      verify: true,
+      password: providedPassword
     });
     const stored = readWorkspace(workspace.id) || workspace;
     const safeWorkspace = ensureWorkspaceShape({ ...stored });
