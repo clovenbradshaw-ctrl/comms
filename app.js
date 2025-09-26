@@ -37,9 +37,6 @@ const DOM = {
   identitySuggestions: document.getElementById('identitySuggestions'),
   identityNameInput: document.getElementById('identityNameInput'),
   identityRefreshBtn: document.getElementById('identityRefreshBtn'),
-  identityPasswordInput: document.getElementById('identityPasswordInput'),
-  identityStrengthBar: document.getElementById('identityStrengthBar'),
-  identityStrengthText: document.getElementById('identityStrengthText'),
   identityModeCreate: document.getElementById('identityModeCreate'),
   identityModeReturning: document.getElementById('identityModeReturning'),
   identityReturningForm: document.getElementById('identityReturningForm'),
@@ -1558,13 +1555,15 @@ class SecureChat {
           return;
         }
 
-        const password = this.entryScreen.getElement('identityPasswordInput')?.value?.trim() || '';
-        if (password.length < 8) {
-          this.showIdentityError('Password must be at least 8 characters.');
+        const passwordManager = window?.masterPasswordManager || null;
+        const password = passwordManager?.ensurePassword();
+        if (!password) {
+          this.showIdentityError('Unable to generate a master password. Refresh and try again.');
           return;
         }
 
         try {
+          passwordManager?.remember(password);
           const identity = await this.identityManager.createIdentity(displayName, password);
           this.localIdentity = identity;
           this.roomMembers?.upsertMember(identity, { isHost: this.isHost, online: true });
@@ -1572,7 +1571,7 @@ class SecureChat {
           this.scheduleIdentityAnnouncement();
         } catch (error) {
           console.warn('Failed to create room identity.', error);
-          this.showIdentityError('Unable to create identity. Please try a different password.');
+          this.showIdentityError('Unable to create identity. Please try again.');
         }
       }
 
@@ -1594,11 +1593,12 @@ class SecureChat {
 
         const password = this.entryScreen.getElement('identityReturningPassword')?.value?.trim() || '';
         if (!password) {
-          this.showIdentityError('Enter the room password.');
+          this.showIdentityError('Enter the master password to unlock your identity.');
           return;
         }
 
         try {
+          window?.masterPasswordManager?.remember(password);
           const identity = await this.identityManager.verifyReturningMember(password);
           if (!identity) {
             this.showIdentityError('No saved identity found for this room.');

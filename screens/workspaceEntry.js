@@ -21,9 +21,6 @@ class WorkspaceEntryScreen {
       identitySuggestions: this.document.getElementById('identitySuggestions'),
       identityNameInput: this.document.getElementById('identityNameInput'),
       identityRefreshBtn: this.document.getElementById('identityRefreshBtn'),
-      identityPasswordInput: this.document.getElementById('identityPasswordInput'),
-      identityStrengthBar: this.document.getElementById('identityStrengthBar'),
-      identityStrengthText: this.document.getElementById('identityStrengthText'),
       identityModeCreate: this.document.getElementById('identityModeCreate'),
       identityModeReturning: this.document.getElementById('identityModeReturning'),
       identityReturningForm: this.document.getElementById('identityReturningForm'),
@@ -86,13 +83,6 @@ class WorkspaceEntryScreen {
         this.updateJoinButtonText();
         this.clearIdentityError();
         this.renderIdentitySelector();
-      });
-    }
-
-    if (this.dom.identityPasswordInput) {
-      this.dom.identityPasswordInput.addEventListener('input', () => {
-        this.updatePasswordStrength();
-        this.clearIdentityError();
       });
     }
 
@@ -475,26 +465,6 @@ class WorkspaceEntryScreen {
     return `SecureGuest-${random}`;
   }
 
-  updatePasswordStrength() {
-    const value = this.dom.identityPasswordInput?.value || '';
-    const bar = this.dom.identityStrengthBar;
-    const text = this.dom.identityStrengthText;
-    let score = 0;
-    if (value.length >= 8) score += 1;
-    if (value.length >= 12) score += 1;
-    if (/[A-Z]/.test(value) && /[a-z]/.test(value)) score += 1;
-    if (/\d/.test(value)) score += 1;
-    if (/[^A-Za-z0-9]/.test(value)) score += 1;
-    score = Math.min(score, 4);
-    if (bar) {
-      bar.setAttribute('data-strength', String(score));
-    }
-    if (text) {
-      const labels = ['Very weak', 'Weak', 'Okay', 'Strong', 'Excellent'];
-      text.textContent = labels[score] || 'Choose a strong password';
-    }
-  }
-
   showIdentityError(message) {
     const error = this.dom.identityError;
     if (!error) {
@@ -522,13 +492,12 @@ class WorkspaceEntryScreen {
     this.displayIdentityMode(mode, options?.stored);
     this.identityModal.hidden = false;
 
-    if (mode === 'create') {
-      this.refreshIdentitySuggestions(!this.identitySelectedName);
-      this.updatePasswordStrength();
-      setTimeout(() => this.dom.identityNameInput?.focus(), 0);
-    } else {
-      setTimeout(() => this.dom.identityReturningPassword?.focus(), 0);
-    }
+      if (mode === 'create') {
+        this.refreshIdentitySuggestions(!this.identitySelectedName);
+        setTimeout(() => this.dom.identityNameInput?.focus(), 0);
+      } else {
+        setTimeout(() => this.dom.identityReturningPassword?.focus(), 0);
+      }
 
     return new Promise((resolve) => {
       this.identityModalResolve = resolve;

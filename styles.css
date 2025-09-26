@@ -430,54 +430,119 @@
     }
 
     .btn {
-      padding: 0.9rem 1.75rem;
-      min-height: 52px;
-      border: none;
-      border-radius: 14px;
-      font-size: 1.0625rem;
-      font-weight: 600;
-      line-height: 1.2;
-      cursor: pointer;
-      transition: all 0.3s ease;
-      display: flex;
+      display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 0.65rem;
-      outline: none;
-      -webkit-tap-highlight-color: transparent;
+      gap: 0.5rem;
+      padding: 14px 24px;
+      min-height: 48px;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      line-height: 1;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      color: inherit;
+      background: transparent;
+    }
+
+    .btn:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
     }
 
     .btn-primary {
-      background: var(--accent);
-      color: white;
+      background: #2563eb;
+      color: #fff;
     }
 
     .btn-primary:hover {
-      background: var(--accent-hover);
-      transform: translateY(-2px);
-      box-shadow: 0 10px 30px rgba(0, 102, 255, 0.3);
+      background: #1d4ed8;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+    }
+
+    .btn-primary:active {
+      transform: translateY(0);
+      box-shadow: 0 2px 4px rgba(37, 99, 235, 0.3);
     }
 
     .btn-secondary {
-      background: var(--bg-tertiary);
-      color: var(--text-primary);
-      border: 1px solid var(--border);
+      background: #374151;
+      color: #fff;
     }
 
     .btn-secondary:hover {
-      background: #333;
-      transform: translateY(-2px);
+      background: #1f2937;
+    }
+
+    .btn-secondary:active {
+      background: #111827;
+    }
+
+    .btn-copy {
+      width: 100%;
+      padding: 14px 24px;
+      min-height: 48px;
+      font-size: 16px;
+      font-weight: 600;
+      background: #10b981;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+
+    .btn-copy:hover {
+      background: #059669;
+    }
+
+    .btn-copy:active {
+      background: #047857;
+    }
+
+    .btn-primary.copied,
+    .btn-copy.copied {
+      background: #0ea5e9;
     }
 
     .btn-success {
-      background: var(--success, #16a34a);
+      background: #10b981;
       color: #fff;
       border: none;
     }
 
     .btn-success:hover {
-      filter: brightness(1.1);
-      transform: translateY(-1px);
+      background: #059669;
+    }
+
+    .btn-success:active {
+      background: #047857;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: center;
+      margin-top: 24px;
+    }
+
+    @media (max-width: 640px) {
+      .button-group {
+        flex-direction: column;
+      }
+
+      .button-group .btn {
+        width: 100%;
+      }
     }
 
     /* Room Setup */
@@ -3767,6 +3832,36 @@
   }
 }
 
+.credential-display {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.invite-code-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.invite-code-section label {
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #475569;
+  font-weight: 600;
+}
+
+.invite-code-section .invite-code {
+  font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+  font-size: 1.5rem;
+  letter-spacing: 0.16em;
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  background: #0f172a;
+  color: #e2e8f0;
+  text-align: center;
+}
+
 .credentials-grid {
   display: grid;
   gap: 1.25rem;
@@ -3774,89 +3869,73 @@
 }
 
 .credential-card {
-  border-radius: 18px;
-  padding: 1.75rem;
-  display: grid;
+  border-radius: 16px;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
   gap: 1rem;
   border: 1px solid #e2e8f0;
   background: #ffffff;
-  text-align: left;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
 }
 
-.credential-card.primary {
-  background: #eff6ff;
-  border-color: #bfdbfe;
+.credential-card.emphasized {
+  border-color: #d9f99d;
+  background: #f7fee7;
 }
 
-.credential-card.secondary {
-  background: #f0fdf4;
-  border-color: #bbf7d0;
+.credential-card.muted {
+  border-style: dashed;
+  border-color: rgba(148, 163, 184, 0.6);
+  background: rgba(241, 245, 249, 0.65);
 }
 
-.credential-label {
-  font-size: 0.8125rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #475569;
-  display: inline-flex;
+.credential-header {
+  display: flex;
   align-items: center;
   gap: 0.5rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #475569;
   font-weight: 600;
+}
+
+.credential-header .icon {
+  font-size: 1rem;
+}
+
+.credential-header label {
+  cursor: default;
 }
 
 .credential-value {
   font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
-  background: #ffffff;
-  border-radius: 12px;
+  background: #f8fafc;
+  border-radius: 10px;
   padding: 0.85rem 1rem;
-  font-size: 0.875rem;
-  line-height: 1.6;
+  font-size: 0.85rem;
   color: #1f2937;
   word-break: break-all;
   box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.25);
 }
 
 .credential-value--code {
-  font-size: 0.8125rem;
+  font-size: 0.8rem;
 }
 
-.credential-card.secondary .credential-value {
+.credential-value--password {
   font-size: 1.25rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.14em;
   text-align: center;
+  background: #0f172a;
+  color: #f8fafc;
 }
 
-.credential-value--muted {
-  color: #64748b;
-  background: rgba(255, 255, 255, 0.7);
-  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.2);
-}
-
-.copy-btn {
-  border: none;
-  border-radius: 12px;
-  padding: 0.85rem 1rem;
-  font-size: 0.95rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  background: #2563eb;
-  color: white;
-  min-height: 48px;
-}
-
-.copy-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 12px 20px -16px rgba(37, 99, 235, 0.6);
-}
-
-.credential-card.secondary .copy-btn {
-  background: #10b981;
-}
-
-.copy-btn.copied {
-  background: #0ea5e9;
+.helper-text {
+  font-size: 0.8rem;
+  color: #475569;
+  line-height: 1.4;
 }
 
 .warning-box {
