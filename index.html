@@ -257,15 +257,8 @@
               </div>
 
               <div class="identity-block">
-                <h4>Password</h4>
-                <p class="help-text">Create a password to rejoin this room later</p>
-                <div class="password-input-group">
-                  <input type="password" id="identityPasswordInput" placeholder="Create room password" autocomplete="new-password" required>
-                  <div class="password-strength">
-                    <div id="identityStrengthBar" class="strength-bar" data-strength="0"></div>
-                    <span id="identityStrengthText" class="strength-text">Choose a strong password</span>
-                  </div>
-                </div>
+                <h4>Security</h4>
+                <p class="help-text">We’ll auto-generate a master password when the workspace is created. Save it from the success screen to rejoin later.</p>
               </div>
 
               <div class="identity-actions">
@@ -278,8 +271,8 @@
             <form id="identityReturningForm" novalidate>
               <div class="identity-block">
                 <h4>Welcome Back</h4>
-                <p class="help-text">Enter your password to rejoin as <strong id="identityHint">You</strong></p>
-                <input type="password" id="identityReturningPassword" placeholder="Enter your room password" autocomplete="current-password" required>
+                <p class="help-text">Enter the master password to rejoin as <strong id="identityHint">You</strong></p>
+                <input type="password" id="identityReturningPassword" placeholder="Enter master password" autocomplete="current-password" required>
               </div>
               <div class="identity-actions">
                 <button type="submit" class="btn btn-primary">Rejoin Room</button>
@@ -296,53 +289,12 @@
 
   <div id="reentryContainer" hidden></div>
 
-  <div id="storagePassphraseModal" class="sheet-modal" hidden role="dialog" aria-modal="true" aria-labelledby="storagePassphraseTitle">
-    <div class="sheet-modal__overlay" data-action="close-passphrase"></div>
-    <div class="sheet-modal__content" role="document">
-      <button type="button" class="sheet-modal__close" data-action="close-passphrase" aria-label="Close passphrase dialog">✕</button>
-      <div class="sheet-modal__header">
-        <div class="sheet-modal__icon">🛡️</div>
-        <div>
-          <p class="sheet-modal__eyebrow">Encrypted history</p>
-          <h2 id="storagePassphraseTitle">Protect your saved conversations</h2>
-          <p class="sheet-modal__subtitle">Set a password so only you can unlock stored chats on this device.</p>
-        </div>
-      </div>
-      <form id="storagePassphraseForm" novalidate>
-        <div class="field-group">
-          <label for="storagePassphraseInput">Workspace history password</label>
-          <input type="password" id="storagePassphraseInput" minlength="8" autocomplete="new-password" placeholder="Enter a strong password" required>
-          <p class="field-hint">We'll use this password to encrypt messages saved locally. Keep it somewhere safe.</p>
-          <div class="strength-meter" id="storagePassphraseStrength" aria-live="polite">
-            <span class="strength-bar"></span>
-            <span class="strength-bar"></span>
-            <span class="strength-bar"></span>
-            <span class="strength-bar"></span>
-            <span class="strength-label" id="storagePassphraseStrengthText">Strength: weak</span>
-          </div>
-          <p class="field-error" id="storagePassphraseError" role="alert" hidden></p>
-        </div>
-        <div class="field-group inline">
-          <label class="toggle">
-            <input type="checkbox" id="storageRememberPassphrase" checked>
-            <span>Remember this password for the current session</span>
-          </label>
-          <p class="field-hint">We'll forget it as soon as you close the tab.</p>
-        </div>
-        <div class="sheet-modal__actions">
-          <button type="submit" class="btn-primary" data-loading-text="Encrypting…">
-            <span class="btn-icon">🔐</span>
-            <span class="btn-label">Save password</span>
-          </button>
-          <button type="button" class="btn-secondary" data-action="skip-passphrase">Not now</button>
-        </div>
-      </form>
-    </div>
-  </div>
+  <div id="storagePassphraseModal" hidden></div>
 
   <!-- Load PeerJS -->
   <script src="https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js"></script>
 
+  <script src="lib/password-manager.js"></script>
   <script src="lib/identity.js"></script>
     <script src="lib/events.js"></script>
   <script src="lib/state.js"></script>

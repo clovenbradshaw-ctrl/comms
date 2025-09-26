@@ -114,39 +114,26 @@ function generateWorkspaceMemberName() {
   return `user-${generateRandomSegment(10).toLowerCase()}`;
 }
 
-async function captureWorkspacePassword({ workspaceName, mode }) {
-  const label = workspaceName ? ` for ${workspaceName}` : '';
-  const isCreate = mode === 'create';
-  const promptMessage = isCreate
-    ? `Set a password${label}. It must be at least 8 characters.`
-    : `Enter your workspace password${label}.`;
-
-  if (typeof window === 'undefined' || typeof window.prompt !== 'function') {
-    console.warn('Password prompt unavailable; generating a secure password automatically.');
-    const buffer = new Uint8Array(12);
-    crypto.getRandomValues(buffer);
-    return Array.from(buffer, byte => byte.toString(16).padStart(2, '0')).join('');
+async function captureWorkspacePassword({ mode }) {
+  const manager = window?.masterPasswordManager;
+  if (!manager) {
+    throw new Error('Master password service unavailable.');
   }
 
-  let attempts = 0;
-  while (attempts < 3) {
-    const input = window.prompt(promptMessage, '');
-    if (input === null) {
-      const error = new Error('User cancelled password entry.');
-      error.code = 'PASSWORD_CANCELLED';
-      throw error;
-    }
-    const password = input.trim();
-    if (password.length >= 8) {
-      return password;
-    }
-    attempts += 1;
-    if (attempts >= 3) {
-      throw new Error('Password must be at least 8 characters long.');
-    }
+  if (mode === 'create') {
+    const password = manager.ensurePassword();
+    manager.remember(password);
+    return password;
   }
 
-  throw new Error('Unable to capture password for workspace member.');
+  const existing = manager.getPassword();
+  if (existing) {
+    return existing;
+  }
+
+  const error = new Error('Workspace verification requires the shared password.');
+  error.code = 'PASSWORD_REQUIRED';
+  throw error;
 }
 
 async function ensureWorkspaceMemberProfile(workspaceId, options = {}) {
@@ -160,6 +147,8 @@ async function ensureWorkspaceMemberProfile(workspaceId, options = {}) {
   const providedPassword = typeof providedPasswordRaw === 'string'
     ? providedPasswordRaw.trim()
     : '';
+
+  const passwordManager = window?.masterPasswordManager || null;
 
   if (!workspaceId) {
     throw new Error('workspaceId is required.');
@@ -184,7 +173,10 @@ async function ensureWorkspaceMemberProfile(workspaceId, options = {}) {
   }
 
   if (!profile.passwordDigest || forceNew) {
-    const password = providedPassword || await captureWorkspacePassword({ workspaceName, mode: 'create' });
+    const password = providedPassword
+      || passwordManager?.ensurePassword()
+      || await captureWorkspacePassword({ mode: 'create' });
+    passwordManager?.remember(password);
     profile.passwordDigest = await hashWorkspaceSecret(password);
     profile.passwordCreatedAt = now;
     profile.lastVerifiedAt = now;
@@ -197,6 +189,7 @@ async function ensureWorkspaceMemberProfile(workspaceId, options = {}) {
       if (digest === profile.passwordDigest) {
         verified = true;
         profile.lastVerifiedAt = Date.now();
+        passwordManager?.remember(providedPassword);
       } else {
         const error = new Error('Unable to verify workspace credentials.');
         error.code = 'PASSWORD_INVALID';
@@ -205,19 +198,17 @@ async function ensureWorkspaceMemberProfile(workspaceId, options = {}) {
     }
 
     while (!verified && attempts < 3) {
-      let password;
-      try {
-        password = await captureWorkspacePassword({ workspaceName, mode: 'verify' });
-      } catch (error) {
-        if (error?.code === 'PASSWORD_CANCELLED') {
-          throw error;
-        }
-        throw new Error('Workspace verification requires a password.');
+      const password = passwordManager?.getPassword();
+      if (!password) {
+        const error = new Error('Workspace verification requires the shared password.');
+        error.code = 'PASSWORD_REQUIRED';
+        throw error;
       }
       const digest = await hashWorkspaceSecret(password);
       if (digest === profile.passwordDigest) {
         verified = true;
         profile.lastVerifiedAt = Date.now();
+        passwordManager?.remember(password);
       } else {
         attempts += 1;
         if (typeof window !== 'undefined' && typeof window.alert === 'function' && attempts < 3) {
@@ -1173,22 +1164,12 @@ class WorkspaceApp {
     this.flowBody.innerHTML = `
       <div class="security-panel">
         <div class="security-panel__explain">
-          <strong>${draft.name}</strong> will be locked behind a password so only approved teammates can access settings and history. Choose a strong password and decide if two-factor approvals are required.
+          <strong>${draft.name}</strong> will be locked with a single master password that we generate for you. Share it carefully—everyone uses the same credential to unlock history, invites, and admin tools.
         </div>
         <form id="createWorkspaceSecurity" class="form-grid" novalidate>
           <div class="field-group" data-field="workspacePassword">
-            <label for="createWorkspacePassword">Workspace password</label>
-            <input type="password" id="createWorkspacePassword" name="workspacePassword" minlength="8" placeholder="Create a secure password" autocomplete="new-password">
-            <p class="field-hint">Protects workspace settings, invite creation, and encrypted message history.</p>
-            <div class="strength-meter" id="createWorkspaceStrength" data-level="${strengthLevel}">
-              <span class="strength-bar"></span>
-              <span class="strength-bar"></span>
-              <span class="strength-bar"></span>
-              <span class="strength-bar"></span>
-              <span class="strength-bar"></span>
-              <span class="strength-label" id="createWorkspaceStrengthText">Strength: ${describeStrength(strengthLevel)}</span>
-            </div>
-            <p class="field-error" hidden></p>
+            <h4>Automatic protection</h4>
+            <p class="field-hint">We'll generate the master password during setup and show it once on the next screen. Save it securely—it unlocks everything for this workspace.</p>
           </div>
           <div class="field-group inline" data-field="workspaceTwoFactor">
             <label class="toggle">
@@ -1204,27 +1185,12 @@ class WorkspaceApp {
               <span class="btn-label">Complete setup</span>
             </button>
             <button type="button" class="btn-secondary" data-action="back-to-details">Back</button>
-            <button type="button" class="btn-secondary" data-action="skip-security">Skip password</button>
           </div>
         </form>
       </div>
     `;
 
     const form = this.flowBody.querySelector('#createWorkspaceSecurity');
-    const passwordInput = form.querySelector('#createWorkspacePassword');
-    const strengthMeter = form.querySelector('#createWorkspaceStrength');
-    const strengthText = form.querySelector('#createWorkspaceStrengthText');
-
-    passwordInput?.addEventListener('input', () => {
-      const value = passwordInput.value.trim();
-      const level = evaluatePasswordStrength(value);
-      if (strengthMeter) {
-        strengthMeter.dataset.level = `${level}`;
-      }
-      if (strengthText) {
-        strengthText.textContent = `Strength: ${describeStrength(level)}`;
-      }
-    });
 
     form.addEventListener('submit', event => {
       event.preventDefault();
@@ -1236,42 +1202,21 @@ class WorkspaceApp {
       this.updateFlowUI();
     });
 
-    form.querySelector('[data-action="skip-security"]')?.addEventListener('click', async () => {
-      await this.completeWorkspaceSetup({ password: '', twoFactor: form.querySelector('#createWorkspace2FA')?.checked || false });
-    });
   }
 
   async handleCreateSecuritySubmit(form) {
     this.clearFormErrors(form);
-    const passwordInput = form.querySelector('#createWorkspacePassword');
     const twoFactorInput = form.querySelector('#createWorkspace2FA');
     const errorMessage = form.querySelector('#createSecurityError');
     const submitButton = form.querySelector('button[type="submit"]');
 
-    const password = passwordInput?.value.trim() || '';
-    if (password && password.length < 8) {
-      this.setFieldError(form, 'workspacePassword', 'Passwords should be at least 8 characters long.');
-      passwordInput?.focus();
-      return;
-    }
-
-    if (password && evaluatePasswordStrength(password) < 1) {
-      this.setFieldError(form, 'workspacePassword', 'Try mixing upper and lower case letters, numbers, or symbols for a stronger password.');
-      passwordInput?.focus();
-      return;
-    }
-
     this.setButtonLoading(submitButton, true);
     try {
-      await this.completeWorkspaceSetup({ password, twoFactor: twoFactorInput?.checked || false });
+      await this.completeWorkspaceSetup({ twoFactor: twoFactorInput?.checked || false });
     } catch (error) {
       console.warn('Unable to create workspace', error);
       if (errorMessage) {
-        if (error?.code === 'PASSWORD_CANCELLED') {
-          errorMessage.textContent = 'Workspace setup cancelled because no password was provided.';
-        } else {
-          errorMessage.textContent = 'Unable to save workspace. Your browser storage may be full.';
-        }
+        errorMessage.textContent = 'Unable to save workspace. Your browser storage may be full.';
         errorMessage.hidden = false;
       }
     } finally {
@@ -1280,7 +1225,7 @@ class WorkspaceApp {
   }
 
   // Finalise workspace creation by persisting and updating local state.
-  async completeWorkspaceSetup({ password, twoFactor }) {
+  async completeWorkspaceSetup({ twoFactor }) {
     const draft = this.flowState.draft;
     if (!draft) {
       return;
@@ -1290,10 +1235,14 @@ class WorkspaceApp {
     const workspaceId = ensureUniqueWorkspaceId();
     const inviteCode = generateInviteCode();
     const creatorPeerId = window.App?.peer?.id || null;
+    const passwordManager = window?.masterPasswordManager || null;
+    const masterPassword = passwordManager?.ensurePassword() || await captureWorkspacePassword({ mode: 'create' });
+    passwordManager?.remember(masterPassword);
+
     const profile = await ensureWorkspaceMemberProfile(workspaceId, {
       workspaceName: draft.name || workspaceId,
       forceNew: true,
-      password
+      password: masterPassword
     });
 
     const workspace = ensureWorkspaceShape({
@@ -1320,11 +1269,11 @@ class WorkspaceApp {
       requests: []
     });
 
-    const strength = evaluatePasswordStrength(password);
+    const strength = evaluatePasswordStrength(masterPassword);
     workspace.security = {
-      passwordEnabled: Boolean(password),
-      passwordStrength: password ? describeStrength(strength) : 'weak',
-      passwordDigest: password ? await hashWorkspaceSecret(password) : null,
+      passwordEnabled: true,
+      passwordStrength: describeStrength(strength),
+      passwordDigest: await hashWorkspaceSecret(masterPassword),
       twoFactor: Boolean(twoFactor),
       createdAt: now,
       explanation: 'Protects workspace invites, history, and admin settings.'
@@ -1343,7 +1292,7 @@ class WorkspaceApp {
     this.flowState.mode = 'create';
     this.flowState.step = 'success';
     this.flowState.memberProfile = profile;
-    this.flowState.plainPassword = password || '';
+    this.flowState.plainPassword = masterPassword || '';
     this.flowState.draft = null;
     this.updateAfterWorkspaceChange();
     this.updateFlowUI();
@@ -1645,25 +1594,29 @@ class WorkspaceApp {
     const hasPassword = Boolean(workspace.security?.passwordEnabled);
     const plainPassword = this.flowState.plainPassword || '';
     const canShowPassword = hasPassword && plainPassword;
-    const passwordCard = hasPassword ? `
-      <div class="credential-card secondary">
-        <div class="credential-label">
-          <span aria-hidden="true">🔐</span>
-          Workspace password
+    const passwordCard = canShowPassword ? `
+      <div class="credential-card emphasized">
+        <div class="credential-header">
+          <span class="icon" aria-hidden="true">🔐</span>
+          <label>Master password (auto-generated)</label>
         </div>
-        <div class="credential-value${canShowPassword ? '' : ' credential-value--muted'}">
-          ${canShowPassword ? escapeHTML(plainPassword) : 'Only workspace owners can share the password.'}
-        </div>
-        ${canShowPassword ? `
-          <button class="copy-btn" type="button" data-copy-value="${escapeHTML(plainPassword)}">
-            Copy password
-          </button>
-        ` : ''}
+        <div class="credential-value credential-value--password">${escapeHTML(plainPassword)}</div>
+        <button class="btn-copy" type="button" data-copy-value="${escapeHTML(plainPassword)}">
+          <span aria-hidden="true">📋</span>
+          <span>Copy password</span>
+        </button>
+        <p class="helper-text">Save this password—it unlocks workspace access, encrypted history, and stored identities.</p>
       </div>
-    ` : '';
-    const warningText = hasPassword
-      ? 'Share the encrypted link and workspace password through different channels. Members will need both credentials plus their own 2FA to access the workspace.'
-      : 'Share this encrypted link only with trusted teammates. Two-factor approvals keep your workspace secure.';
+    ` : `
+      <div class="credential-card muted">
+        <div class="credential-header">
+          <span class="icon" aria-hidden="true">🔐</span>
+          <label>Master password</label>
+        </div>
+        <p class="helper-text">Only workspace owners can reveal the master password.</p>
+      </div>
+    `;
+    const warningText = 'Store the master password somewhere safe and share it through a separate channel from the invite link.';
 
     this.flowBody.innerHTML = `
       <div class="success-container" data-badge="${badgeText}">
@@ -1671,36 +1624,34 @@ class WorkspaceApp {
         <h3 class="success-title">${heading}</h3>
         <p class="success-subtitle">Your secure workspace has been created with multi-layer protection.</p>
 
-        <div class="invite-code-display">
-          <span class="invite-code-label">Quick access code</span>
-          <code class="invite-code">${inviteCode}</code>
-        </div>
-
-        <div class="credentials-grid">
-          <div class="credential-card primary">
-            <div class="credential-label">
-              <span aria-hidden="true">🔗</span>
-              Encrypted workspace link
-            </div>
-            <div class="credential-value credential-value--code">
-              ${inviteLink}
-            </div>
-            <button class="copy-btn" type="button" data-copy-value="${inviteLink}">
-              Copy encrypted link
-            </button>
+        <div class="credential-display">
+          <div class="invite-code-section">
+            <label>Quick access code</label>
+            <div class="invite-code">${inviteCode}</div>
           </div>
-          ${passwordCard}
+
+          <div class="credentials-grid">
+            <div class="credential-card">
+              <div class="credential-header">
+                <span class="icon" aria-hidden="true">🔗</span>
+                <label>Encrypted workspace link</label>
+              </div>
+              <div class="credential-value credential-value--code">${inviteLink}</div>
+              <button class="btn-primary" type="button" data-copy-value="${inviteLink}">Copy link</button>
+            </div>
+            ${passwordCard}
+          </div>
         </div>
 
         <div class="warning-box" role="alert">
           <span class="warning-icon" aria-hidden="true">⚠️</span>
           <div class="warning-content">
-            <p class="warning-title">Security best practice</p>
+            <p class="warning-title">Security reminder</p>
             <p class="warning-text">${warningText}</p>
           </div>
         </div>
 
-        <div class="success-actions">
+        <div class="button-group">
           <button type="button" class="btn btn-primary" data-action="enter-workspace" data-workspace-id="${workspace.id}">
             <span aria-hidden="true">🚀</span>
             <span>Open workspace</span>
