@@ -451,6 +451,9 @@ function enterWorkspace(workspaceId) {
   if (window.App?.setWorkspaceContext) {
     window.App.setWorkspaceContext(workspace.id);
   }
+  if (root) {
+    root.hidden = true;
+  }
 }
 
 function leaveWorkspaceView() {

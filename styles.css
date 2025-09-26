@@ -3744,6 +3744,24 @@
   position: relative;
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
+  color: #0f172a;
+}
+
+.workspace-card h3 {
+  color: #0f172a;
+}
+
+.workspace-card p {
+  color: #475569;
+}
+
+.workspace-card .stat-number {
+  color: #0f172a;
+}
+
+.workspace-card .stat-label {
+  color: #64748b;
+  opacity: 1;
 }
 
 .workspace-card:hover {
@@ -3810,6 +3828,20 @@
 .workspace-url {
   font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: #2563eb;
+}
+
+.workspace-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+  color: #0f172a;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
 }
 
 .workspace-dashboard {
