@@ -1,6 +1,6 @@
 const WORKSPACE_STORAGE_PREFIX = 'workspace_';
 const ACTIVE_WORKSPACE_KEY = 'workspace_active';
-const LOCAL_PROFILE_KEY = 'workspace_profile';
+const MEMBER_PROFILE_PREFIX = 'workspace_member_profile_';
 
 // Polling configuration for waiting on the WorkspaceView module to initialise.
 const WORKSPACE_VIEW_POLL_INTERVAL = 60;
@@ -69,34 +69,152 @@ function slugifyChannelName(name) {
   return normalized || generateRandomSegment(6).toLowerCase();
 }
 
-function getLocalWorkspaceProfile() {
+function getWorkspaceMemberProfileKey(workspaceId) {
+  if (!workspaceId) {
+    throw new Error('workspaceId is required for member profile operations.');
+  }
+  return `${MEMBER_PROFILE_PREFIX}${workspaceId}`;
+}
+
+function readStoredMemberProfile(workspaceId) {
+  if (!workspaceId) {
+    return null;
+  }
+
+  const key = getWorkspaceMemberProfileKey(workspaceId);
+  const raw = localStorage.getItem(key);
+  if (!raw) {
+    return null;
+  }
+
   try {
-    const raw = localStorage.getItem(LOCAL_PROFILE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && parsed.id && parsed.name) {
-        return parsed;
-      }
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.id && parsed.name && parsed.passwordDigest) {
+      return parsed;
     }
   } catch (error) {
-    console.warn('Unable to read local workspace profile', error);
+    console.warn('Unable to parse stored member profile', error);
   }
+  return null;
+}
 
-  const fallbackName = window.App?.localIdentity?.displayName
-    || window.App?.profile?.displayName
-    || 'Me';
-  const profile = {
-    id: `member-${generateRandomSegment(8).toLowerCase()}`,
-    name: fallbackName,
-    created: Date.now()
-  };
-
+function persistMemberProfile(workspaceId, profile) {
+  if (!workspaceId || !profile) {
+    return;
+  }
+  const key = getWorkspaceMemberProfileKey(workspaceId);
   try {
-    localStorage.setItem(LOCAL_PROFILE_KEY, JSON.stringify(profile));
+    localStorage.setItem(key, JSON.stringify(profile));
   } catch (error) {
-    console.warn('Unable to persist local workspace profile', error);
+    console.warn('Unable to persist member profile', error);
+  }
+}
+
+function generateWorkspaceMemberName() {
+  return `user-${generateRandomSegment(10).toLowerCase()}`;
+}
+
+async function captureWorkspacePassword({ workspaceName, mode }) {
+  const label = workspaceName ? ` for ${workspaceName}` : '';
+  const isCreate = mode === 'create';
+  const promptMessage = isCreate
+    ? `Set a password${label}. It must be at least 8 characters.`
+    : `Enter your workspace password${label}.`;
+
+  if (typeof window === 'undefined' || typeof window.prompt !== 'function') {
+    console.warn('Password prompt unavailable; generating a secure password automatically.');
+    const buffer = new Uint8Array(12);
+    crypto.getRandomValues(buffer);
+    return Array.from(buffer, byte => byte.toString(16).padStart(2, '0')).join('');
   }
 
+  let attempts = 0;
+  while (attempts < 3) {
+    const input = window.prompt(promptMessage, '');
+    if (input === null) {
+      const error = new Error('User cancelled password entry.');
+      error.code = 'PASSWORD_CANCELLED';
+      throw error;
+    }
+    const password = input.trim();
+    if (password.length >= 8) {
+      return password;
+    }
+    attempts += 1;
+    if (attempts >= 3) {
+      throw new Error('Password must be at least 8 characters long.');
+    }
+  }
+
+  throw new Error('Unable to capture password for workspace member.');
+}
+
+async function ensureWorkspaceMemberProfile(workspaceId, options = {}) {
+  const {
+    workspaceName = '',
+    forceNew = false,
+    verify = false
+  } = options;
+
+  if (!workspaceId) {
+    throw new Error('workspaceId is required.');
+  }
+
+  let profile = forceNew ? null : readStoredMemberProfile(workspaceId);
+  const now = Date.now();
+
+  if (!profile) {
+    profile = {
+      id: `member-${generateRandomSegment(8).toLowerCase()}`,
+      name: generateWorkspaceMemberName(),
+      created: now,
+      passwordDigest: null,
+      passwordCreatedAt: null,
+      lastVerifiedAt: null
+    };
+  }
+
+  if (!profile.name || forceNew) {
+    profile.name = generateWorkspaceMemberName();
+  }
+
+  if (!profile.passwordDigest || forceNew) {
+    const password = await captureWorkspacePassword({ workspaceName, mode: 'create' });
+    profile.passwordDigest = await hashWorkspaceSecret(password);
+    profile.passwordCreatedAt = now;
+    profile.lastVerifiedAt = now;
+  } else if (verify) {
+    let verified = false;
+    let attempts = 0;
+    while (!verified && attempts < 3) {
+      let password;
+      try {
+        password = await captureWorkspacePassword({ workspaceName, mode: 'verify' });
+      } catch (error) {
+        if (error?.code === 'PASSWORD_CANCELLED') {
+          throw error;
+        }
+        throw new Error('Workspace verification requires a password.');
+      }
+      const digest = await hashWorkspaceSecret(password);
+      if (digest === profile.passwordDigest) {
+        verified = true;
+        profile.lastVerifiedAt = Date.now();
+      } else {
+        attempts += 1;
+        if (typeof window !== 'undefined' && typeof window.alert === 'function' && attempts < 3) {
+          window.alert('Incorrect password. Try again to verify your workspace identity.');
+        }
+      }
+    }
+    if (!verified) {
+      const error = new Error('Unable to verify workspace credentials.');
+      error.code = 'PASSWORD_INVALID';
+      throw error;
+    }
+  }
+
+  persistMemberProfile(workspaceId, profile);
   return profile;
 }
 
@@ -657,7 +775,8 @@ class WorkspaceApp {
       mode: null,
       draft: null,
       joinTarget: null,
-      resultWorkspace: null
+      resultWorkspace: null,
+      memberProfile: null
     };
 
     if (this.root) {
@@ -693,7 +812,8 @@ class WorkspaceApp {
         mode: null,
         draft: null,
         joinTarget: null,
-        resultWorkspace: null
+        resultWorkspace: null,
+        memberProfile: null
       };
     }
 
@@ -1111,7 +1231,11 @@ class WorkspaceApp {
     } catch (error) {
       console.warn('Unable to create workspace', error);
       if (errorMessage) {
-        errorMessage.textContent = 'Unable to save workspace. Your browser storage may be full.';
+        if (error?.code === 'PASSWORD_CANCELLED') {
+          errorMessage.textContent = 'Workspace setup cancelled because no password was provided.';
+        } else {
+          errorMessage.textContent = 'Unable to save workspace. Your browser storage may be full.';
+        }
         errorMessage.hidden = false;
       }
     } finally {
@@ -1130,7 +1254,10 @@ class WorkspaceApp {
     const workspaceId = ensureUniqueWorkspaceId();
     const inviteCode = generateInviteCode();
     const creatorPeerId = window.App?.peer?.id || null;
-    const profile = getLocalWorkspaceProfile();
+    const profile = await ensureWorkspaceMemberProfile(workspaceId, {
+      workspaceName: draft.name || workspaceId,
+      forceNew: true
+    });
 
     const workspace = ensureWorkspaceShape({
       id: workspaceId,
@@ -1178,6 +1305,7 @@ class WorkspaceApp {
     this.flowState.resultWorkspace = workspace;
     this.flowState.mode = 'create';
     this.flowState.step = 'success';
+    this.flowState.memberProfile = profile;
     this.flowState.draft = null;
     this.updateAfterWorkspaceChange();
     this.updateFlowUI();
@@ -1410,11 +1538,17 @@ class WorkspaceApp {
         }
       }
 
-      this.finalizeJoin(workspace);
+      await this.finalizeJoin(workspace);
     } catch (error) {
       console.warn('Unable to join workspace', error);
       if (errorEl) {
-        errorEl.textContent = 'We hit a snag while joining. Please try again.';
+        if (error?.code === 'PASSWORD_CANCELLED') {
+          errorEl.textContent = 'Join cancelled. Password verification is required for this workspace.';
+        } else if (error?.code === 'PASSWORD_INVALID') {
+          errorEl.textContent = 'That password was incorrect. Please try again.';
+        } else {
+          errorEl.textContent = 'We hit a snag while joining. Please try again.';
+        }
         errorEl.hidden = false;
       }
     } finally {
@@ -1423,8 +1557,11 @@ class WorkspaceApp {
   }
 
   // Apply membership changes locally once a join flow is successful.
-  finalizeJoin(workspace) {
-    const profile = getLocalWorkspaceProfile();
+  async finalizeJoin(workspace) {
+    const profile = await ensureWorkspaceMemberProfile(workspace.id, {
+      workspaceName: workspace.name || workspace.id,
+      verify: true
+    });
     const stored = readWorkspace(workspace.id) || workspace;
     const safeWorkspace = ensureWorkspaceShape({ ...stored });
 
@@ -1446,6 +1583,7 @@ class WorkspaceApp {
     this.flowState.joinTarget = safeWorkspace;
     this.flowState.step = 'success';
     this.flowState.mode = 'join';
+    this.flowState.memberProfile = profile;
     this.updateAfterWorkspaceChange();
     this.updateFlowUI();
     this.scrollFlowIntoView();
@@ -1462,6 +1600,14 @@ class WorkspaceApp {
     const mode = this.flowState.mode || 'create';
     const badgeText = mode === 'create' ? 'Workspace ready' : 'Access granted';
     const heading = mode === 'create' ? 'You just unlocked a secure workspace.' : 'You’re in. Say hello to your teammates!';
+    const memberProfile = this.flowState.memberProfile;
+    const memberRow = memberProfile ? `
+          <div class="success-meta__row">
+            <span>🧑‍💻</span>
+            <span>Your workspace username</span>
+            <strong>${escapeHTML(memberProfile.name)}</strong>
+          </div>
+    ` : '';
 
     this.flowBody.innerHTML = `
       <div class="success-panel">
@@ -1478,6 +1624,7 @@ class WorkspaceApp {
             <span>Share link</span>
             <code>${inviteLink}</code>
           </div>
+          ${memberRow}
           ${workspace.security?.passwordEnabled ? `
             <div class="success-meta__row">
               <span>🛡️</span>
@@ -1645,7 +1792,8 @@ class WorkspaceApp {
       mode: null,
       draft: null,
       joinTarget: null,
-      resultWorkspace: null
+      resultWorkspace: null,
+      memberProfile: null
     };
     this.currentJoinSearch = '';
     this.updateFlowUI();
@@ -1664,6 +1812,7 @@ class WorkspaceApp {
       this.flowState.draft = null;
       this.flowState.joinTarget = null;
       this.flowState.resultWorkspace = null;
+      this.flowState.memberProfile = null;
       if (mode === 'join') {
         this.currentJoinSearch = '';
       }
