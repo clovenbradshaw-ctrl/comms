@@ -1274,6 +1274,7 @@ class SecureChat {
         this.pendingReentryRequest = null;
         this.activeRoomContextMode = null;
         this.activeWorkspaceId = null;
+        this.activeProjectionRoomId = null;
         this.cryptoUpdates = CryptoManager.onUpdated((update) => {
           const fingerprint = update?.fingerprint || '';
           this.latestFingerprint = fingerprint;
@@ -1782,6 +1783,38 @@ class SecureChat {
         return this.roomId;
       }
 
+      getActiveChatRoomId() {
+        if (typeof this.roomId === 'string' && this.roomId) {
+          return this.roomId;
+        }
+        if (typeof this.activeWorkspaceId === 'string' && this.activeWorkspaceId) {
+          return `workspace:${this.activeWorkspaceId}`;
+        }
+        return null;
+      }
+
+      setRoomId(roomId) {
+        const normalized = typeof roomId === 'string' && roomId.trim()
+          ? roomId.trim()
+          : null;
+        this.roomId = normalized;
+        this.updateActiveMessageRoomSubscription();
+      }
+
+      updateActiveMessageRoomSubscription() {
+        if (typeof this.subscribeToMessages !== 'function') {
+          return;
+        }
+
+        const targetRoomId = this.getActiveChatRoomId();
+        if (targetRoomId === this.activeProjectionRoomId) {
+          return;
+        }
+
+        this.activeProjectionRoomId = targetRoomId;
+        this.subscribeToMessages(targetRoomId);
+      }
+
       setRoomContextMode(mode = null) {
         this.activeRoomContextMode = mode;
         if (mode === 'join') {
@@ -1802,7 +1835,7 @@ class SecureChat {
         }
 
         this.useLegacyLayout();
-        this.roomId = entry.roomId;
+        this.setRoomId(entry.roomId);
         const searchParams = params instanceof URLSearchParams ? params : new URLSearchParams(params);
         this.roomReentry.show(entry, searchParams);
       }
@@ -2484,6 +2517,7 @@ This invite can be used only once. Share the link privately.`;
         }
 
         this.activeWorkspaceId = normalized;
+        this.updateActiveMessageRoomSubscription();
 
         if (resetIdentity) {
           this.resetIdentityState({ preserveLocal: false });
@@ -2542,7 +2576,7 @@ This invite can be used only once. Share the link privately.`;
         const searchParams = params instanceof URLSearchParams ? params : new URLSearchParams(params);
 
         if (!roomId) {
-          this.roomId = null;
+          this.setRoomId(null);
           this.showWelcome();
           return;
         }
@@ -2552,7 +2586,7 @@ This invite can be used only once. Share the link privately.`;
         if (entry?.myIdentity) {
           if (this.activeRoomContextMode === 'join') {
             this.useLegacyLayout();
-            this.roomId = roomId;
+            this.setRoomId(roomId);
             this.pendingReentryRequest = null;
             this.roomReentry.show(entry, searchParams);
           } else {
@@ -2566,7 +2600,7 @@ This invite can be used only once. Share the link privately.`;
         }
 
         this.useLegacyLayout();
-        this.roomId = roomId;
+        this.setRoomId(roomId);
         this.showJoin('Secure invite required', 'Use a new invite link from the host to enter this room.');
       }
 
@@ -2638,7 +2672,8 @@ This invite can be used only once. Share the link privately.`;
         CryptoManager.reset();
         this.latestFingerprint = '';
         this.lastAnnouncedEpoch = -1;
-        this.roomId = existingRoomId || this.generateRoomId();
+        const nextRoomId = existingRoomId || this.generateRoomId();
+        this.setRoomId(nextRoomId);
         this.roomSalt = null;
         this.roomSaltBase64 = '';
         this.resetMessageCounters();
@@ -2996,6 +3031,9 @@ This invite can be used only once. Share the link privately.`;
         if (this.isHost && this.localIdentity?.displayName) {
           return `${this.localIdentity.displayName}'s room`;
         }
+        if (!this.roomId && this.activeWorkspaceId) {
+          return 'Workspace chat';
+        }
         return this.roomId || 'Secure Chat';
       }
 
@@ -3102,7 +3140,7 @@ This invite can be used only once. Share the link privately.`;
 
           this.identityManager = manager;
           this.localIdentity = identity;
-          this.roomId = entry.roomId;
+          this.setRoomId(entry.roomId);
           this.isHost = entry.role === 'host';
           this.roomMembers?.upsertMember(identity, { isHost: this.isHost, online: true });
           await this.roomHistory.touch(entry.roomId);
@@ -3541,7 +3579,7 @@ This invite can be used only once. Share the link privately.`;
         this.isHost = true;
         this.roomMembers?.setViewerRole?.(true);
         if (!this.roomId) {
-          this.roomId = this.generateRoomId();
+          this.setRoomId(this.generateRoomId());
         }
 
         let hostSeat;
@@ -3622,7 +3660,7 @@ This invite can be used only once. Share the link privately.`;
           throw new Error('Invalid invite seat identifier');
         }
 
-        this.roomId = invite.roomId;
+        this.setRoomId(invite.roomId);
         this.isHost = false;
         this.roomMembers?.setViewerRole?.(false);
         this.currentShareLink = '';
@@ -3672,14 +3710,21 @@ This invite can be used only once. Share the link privately.`;
           return;
         }
         const text = input.value.trim();
+        const activeRoomId = this.getActiveChatRoomId();
+        const hasConnection = Boolean(this.conn);
+        const usingWorkspaceFallback = !hasConnection && Boolean(this.activeWorkspaceId) && Boolean(activeRoomId);
 
-        if (!text || !this.conn) {
+        if (!text) {
           return;
         }
 
-        if (!CryptoManager.getCurrentKey()) {
-          this.addSystemMessage('⚠️ Encryption key not ready yet.');
-          this.showToast('Encryption key not ready yet.', 'warning');
+        if (!hasConnection && !usingWorkspaceFallback) {
+          return;
+        }
+
+        if (!activeRoomId) {
+          this.addSystemMessage('⚠️ No active workspace or room to send this message.');
+          this.showToast('No active workspace or room selected', 'warning');
           return;
         }
 
@@ -3701,16 +3746,24 @@ This invite can be used only once. Share the link privately.`;
           return;
         }
 
-        const bufferSize = Number(this.conn?.bufferSize ?? 0);
-        if (bufferSize > this.backpressureThreshold) {
-          const now = Date.now();
-          if (now - this.lastBufferWarningAt > this.bufferWarningCooldown) {
-            const notice = '📦 sending… Connection is catching up. Message not sent.';
-            this.addSystemMessage(notice);
-            this.showToast('Connection is busy — try again shortly.', 'warning');
-            this.lastBufferWarningAt = now;
-          }
+        if (!usingWorkspaceFallback && !CryptoManager.getCurrentKey()) {
+          this.addSystemMessage('⚠️ Encryption key not ready yet.');
+          this.showToast('Encryption key not ready yet.', 'warning');
           return;
+        }
+
+        if (!usingWorkspaceFallback) {
+          const bufferSize = Number(this.conn?.bufferSize ?? 0);
+          if (bufferSize > this.backpressureThreshold) {
+            const now = Date.now();
+            if (now - this.lastBufferWarningAt > this.bufferWarningCooldown) {
+              const notice = '📦 sending… Connection is catching up. Message not sent.';
+              this.addSystemMessage(notice);
+              this.showToast('Connection is busy — try again shortly.', 'warning');
+              this.lastBufferWarningAt = now;
+            }
+            return;
+          }
         }
 
         input.value = '';
@@ -3718,10 +3771,53 @@ This invite can be used only once. Share the link privately.`;
         const sentAtLocal = this.getMonotonicTime();
 
         const sequenceNumber = this.outgoingMessageNumber;
-        const routePath = this.getDefaultRoutePath('me');
-        const hopCount = Math.max(routePath.length - 1, 1);
         const localDisplayName = this.localIdentity?.displayName || 'You';
         const localAvatar = this.normalizeAvatar(this.localIdentity?.avatar || this.computeAvatarFromName(localDisplayName));
+        const routePath = usingWorkspaceFallback
+          ? [localDisplayName, 'Workspace']
+          : this.getDefaultRoutePath('me');
+        const hopCount = Math.max(routePath.length - 1, 1);
+        const actorId = this.localUserId;
+        const messageId = generateId('msg-');
+        const eventPayload = {
+          roomId: activeRoomId,
+          messageId,
+          userId: actorId,
+          text,
+          type: 'me',
+          sentAt: sentAtLocal,
+          sentAtLocal,
+          receivedAt: sentAtLocal,
+          hops: hopCount,
+          routePath,
+          arrivalTime: sentAtLocal,
+          state: 'settled',
+          vectorClock: this.buildVectorClock(sequenceNumber, this.localIdentity?.id || actorId),
+          sequence: sequenceNumber,
+          originalPosition: null,
+          isOutOfOrder: false,
+          displayName: localDisplayName,
+          avatar: localAvatar
+        };
+
+        if (usingWorkspaceFallback) {
+          this.messageRateLimit.timestamps.push(Date.now());
+          this.outgoingMessageNumber += 1;
+
+          const event = makeEvent(
+            'MessagePosted',
+            eventPayload,
+            actorId,
+            [`room:${activeRoomId}`, `msg:${messageId}`]
+          );
+
+          try {
+            await publish(event);
+          } catch (error) {
+            console.warn('Failed to persist outgoing workspace message.', error);
+          }
+          return;
+        }
 
         const envelope = {
           kind: 'data',
@@ -3748,40 +3844,18 @@ This invite can be used only once. Share the link privately.`;
 
         this.outgoingMessageNumber += 1;
 
-        if (this.roomId) {
-          const messageId = generateId('msg-');
-          const event = makeEvent(
-            'MessagePosted',
-            {
-              roomId: this.roomId,
-              messageId,
-              userId: this.localUserId,
-              text,
-              type: 'me',
-              sentAt: sentAtLocal,
-              sentAtLocal,
-              receivedAt: sentAtLocal,
-              hops: hopCount,
-              routePath,
-              arrivalTime: sentAtLocal,
-              state: 'settled',
-              vectorClock: this.buildVectorClock(sequenceNumber, this.localIdentity?.id || this.localUserId),
-              sequence: sequenceNumber,
-              originalPosition: null,
-              isOutOfOrder: false,
-              displayName: localDisplayName,
-              avatar: localAvatar
-            },
-            this.localUserId,
-            [`room:${this.roomId}`, `msg:${messageId}`]
-          );
+        const event = makeEvent(
+          'MessagePosted',
+          eventPayload,
+          actorId,
+          [`room:${activeRoomId}`, `msg:${messageId}`]
+        );
 
-          try {
-            this.cacheEncryptedMessage(messageId, encrypted);
-            await publish(event);
-          } catch (error) {
-            console.warn('Failed to persist outgoing message event.', error);
-          }
+        try {
+          this.cacheEncryptedMessage(messageId, encrypted);
+          await publish(event);
+        } catch (error) {
+          console.warn('Failed to persist outgoing message event.', error);
         }
 
         if (this.conn) {
@@ -4991,7 +5065,7 @@ Current Key: ${CryptoManager.getCurrentKey() ? 'Loaded ✓' : 'Not set ✗'}</pr
 
         this.conn = null;
         this.peer = null;
-        this.roomId = null;
+        this.setRoomId(null);
         this.remoteUserId = null;
         this.showEncrypted = false;
         this.lastEncryptedHex = '';
