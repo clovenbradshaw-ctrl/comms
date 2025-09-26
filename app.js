@@ -204,7 +204,7 @@ class RoomURLManager {
 
     switch (route.type) {
       case 'invite':
-        await this.app.handleInviteRoute(route.roomId, route.inviteToken);
+        await this.app.handleInviteRoute(route.roomId, route.inviteToken, route.params);
         break;
       case 'encodedInvite':
         await this.app.handleEncodedInvite(route.token);
@@ -2022,7 +2022,7 @@ This invite can be used only once. Share the link privately.`;
 
         switch (route.type) {
           case 'invite':
-            await this.handleInviteRoute(route.roomId, route.inviteToken);
+            await this.handleInviteRoute(route.roomId, route.inviteToken, route.params);
             break;
           case 'encodedInvite':
             await this.handleEncodedInvite(route.token);
@@ -2032,6 +2032,56 @@ This invite can be used only once. Share the link privately.`;
             break;
           default:
             break;
+        }
+      }
+
+      extractInviteTokenParts(token, params = null) {
+        if (typeof token !== 'string') {
+          return { payloadToken: '', encryptionKey: '' };
+        }
+
+        let encryptionKey = '';
+        if (params instanceof URLSearchParams) {
+          encryptionKey = params.get('key') || params.get('enc') || '';
+        }
+
+        let payloadToken = token;
+        if (token.includes('.')) {
+          const parts = token.split('.', 2);
+          if (parts[0]) {
+            payloadToken = parts[0];
+          }
+          if (parts[1] && !encryptionKey) {
+            encryptionKey = parts[1];
+          }
+        }
+
+        return { payloadToken, encryptionKey };
+      }
+
+      async decodeInviteToken(token, params = null) {
+        if (!token) {
+          return null;
+        }
+
+        const { payloadToken, encryptionKey } = this.extractInviteTokenParts(token, params);
+
+        if (encryptionKey) {
+          try {
+            const decrypted = await SecureInvite.decryptInvitePayload(payloadToken, encryptionKey);
+            if (decrypted) {
+              return decrypted;
+            }
+          } catch (error) {
+            console.warn('Unable to decrypt invite token.', error);
+          }
+        }
+
+        try {
+          return SecureInvite.decodePayload(payloadToken);
+        } catch (error) {
+          console.warn('Unable to decode invite payload.', error);
+          return null;
         }
       }
 
@@ -2097,18 +2147,32 @@ This invite can be used only once. Share the link privately.`;
           signature
         };
 
-        const encoded = SecureInvite.encodePayload({
+        const compact = {
           r: payload.roomId,
           s: payload.seatId,
           k: payload.secretKey,
           e: payload.expiresAt,
           sig: payload.signature
-        });
+        };
 
+        let encoded = SecureInvite.encodePayload(compact);
+        let encryptionKey = '';
+
+        try {
+          const encrypted = await SecureInvite.encryptInvitePayload(compact);
+          if (encrypted?.cipher && encrypted?.key) {
+            encoded = encrypted.cipher;
+            encryptionKey = encrypted.key;
+          }
+        } catch (error) {
+          console.warn('Falling back to unencrypted invite payload.', error);
+        }
+
+        const token = encryptionKey ? `${encoded}.${encryptionKey}` : encoded;
         const origin = window.location.origin + window.location.pathname;
-        const url = `${origin}#/j/${encoded}`;
+        const url = `${origin}#/j/${token}`;
 
-        return { payload, url, encoded };
+        return { payload, url, encoded, encryptionKey, token };
       }
 
       async generateShareLink(roomId, seat = this.seats?.guest) {
@@ -2506,19 +2570,14 @@ This invite can be used only once. Share the link privately.`;
         this.showJoin('Secure invite required', 'Use a new invite link from the host to enter this room.');
       }
 
-      async handleInviteRoute(roomId, inviteToken) {
+      async handleInviteRoute(roomId, inviteToken, params = null) {
         this.useLegacyLayout();
         if (!inviteToken) {
           this.showJoin('Invite unavailable', 'Missing invite token in the URL.');
           return;
         }
 
-        let payload = null;
-        try {
-          payload = SecureInvite.decodePayload(inviteToken);
-        } catch (error) {
-          console.warn('Unable to decode invite token.', error);
-        }
+        let payload = await this.decodeInviteToken(inviteToken, params instanceof URLSearchParams ? params : null);
 
         if (payload && roomId && !payload.roomId && !payload.r) {
           payload.r = roomId;
@@ -2538,12 +2597,7 @@ This invite can be used only once. Share the link privately.`;
           return;
         }
 
-        let payload = null;
-        try {
-          payload = SecureInvite.decodePayload(token);
-        } catch (error) {
-          console.warn('Unable to decode encoded invite payload.', error);
-        }
+        const payload = await this.decodeInviteToken(token);
 
         if (!payload) {
           this.showJoin('Invite unavailable', 'This invite link is no longer valid.');
