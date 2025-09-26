@@ -266,6 +266,12 @@ function enterWorkspace(workspaceId) {
   }
 
   window.workspaceApp?.setActiveWorkspace(workspace.id);
+  if (typeof window !== 'undefined') {
+    const targetHash = `#/workspace/${workspace.id}`;
+    if (window.location.hash !== targetHash) {
+      window.location.hash = targetHash;
+    }
+  }
   initializeWorkspaceConnections(workspace);
   if (window.App?.setWorkspaceContext) {
     window.App.setWorkspaceContext(workspace.id);
@@ -284,6 +290,12 @@ function leaveWorkspaceView() {
   localStorage.removeItem(ACTIVE_WORKSPACE_KEY);
   window.workspaceApp?.setActiveWorkspace(null);
   window.workspaceApp?.renderLanding();
+  if (typeof window !== 'undefined') {
+    const currentHash = window.location.hash || '';
+    if (/^#\/?workspace\//i.test(currentHash)) {
+      window.location.hash = '#/';
+    }
+  }
   if (window.App?.setWorkspaceContext) {
     window.App.setWorkspaceContext(null, { ensureIdentity: false });
   }
@@ -439,7 +451,8 @@ class WorkspaceApp {
   }
 
   setActiveWorkspace(id) {
-    this.activeWorkspaceId = id;
+    this.activeWorkspaceId = id || null;
+    this.updateHeroVisibility();
   }
 
   startFlow(mode) {
@@ -1529,15 +1542,29 @@ function initializeWorkspace() {
 
   window.workspaceApp?.updateHeroStats();
 
-  const activeRaw = localStorage.getItem(ACTIVE_WORKSPACE_KEY);
-  if (activeRaw) {
-    try {
-      const parsed = JSON.parse(activeRaw);
-      if (parsed?.workspaceId && readWorkspace(parsed.workspaceId)) {
-        enterWorkspace(parsed.workspaceId);
+  let restored = false;
+
+  if (typeof window !== 'undefined') {
+    const hash = window.location.hash || '';
+    const match = hash.match(/^#\/?workspace\/([A-Za-z0-9-]+)/);
+    if (match && match[1] && readWorkspace(match[1])) {
+      enterWorkspace(match[1]);
+      restored = true;
+    }
+  }
+
+  if (!restored) {
+    const activeRaw = localStorage.getItem(ACTIVE_WORKSPACE_KEY);
+    if (activeRaw) {
+      try {
+        const parsed = JSON.parse(activeRaw);
+        if (parsed?.workspaceId && readWorkspace(parsed.workspaceId)) {
+          enterWorkspace(parsed.workspaceId);
+          restored = true;
+        }
+      } catch (error) {
+        console.warn('Unable to restore active workspace', error);
       }
-    } catch (error) {
-      console.warn('Unable to restore active workspace', error);
     }
   }
 }
