@@ -2,6 +2,9 @@ const WORKSPACE_STORAGE_PREFIX = 'workspace_';
 const ACTIVE_WORKSPACE_KEY = 'workspace_active';
 const LOCAL_PROFILE_KEY = 'workspace_profile';
 
+let activeWorkspaceView = null;
+let activeWorkspaceRecord = null;
+
 function normalizeWorkspaceCode(value) {
   if (!value) {
     return '';
@@ -34,6 +37,18 @@ function generateWorkspaceId() {
 
 function generateInviteCode() {
   return normalizeWorkspaceCode(generateRandomSegment(6));
+}
+
+function slugifyChannelName(name) {
+  if (!name) {
+    return generateRandomSegment(6).toLowerCase();
+  }
+  const normalized = String(name)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 24);
+  return normalized || generateRandomSegment(6).toLowerCase();
 }
 
 function getLocalWorkspaceProfile() {
@@ -240,23 +255,183 @@ function renderHeroStats(statsEl, workspaces = []) {
   `;
 }
 
+function getWorkspaceShareLink(workspace) {
+  if (!workspace?.id) {
+    return '';
+  }
+  if (typeof window === 'undefined') {
+    return `workspace://${workspace.id}`;
+  }
+  const origin = window.location.origin || '';
+  const path = window.location.pathname || '';
+  const base = `${origin}${path.replace(/\/$/, '')}`;
+  return `${base}#/workspace/${workspace.id}`;
+}
+
+function showWorkspaceLinkFallback(link) {
+  if (typeof window === 'undefined') {
+    console.info('Workspace link:', link);
+    return;
+  }
+  if (typeof window.prompt === 'function') {
+    window.prompt('Copy this workspace link', link);
+    return;
+  }
+  if (typeof window.alert === 'function') {
+    window.alert(`Workspace link: ${link}`);
+  }
+}
+
+function handleWorkspaceLinkCopy(workspace) {
+  const link = getWorkspaceShareLink(workspace);
+  if (!link) {
+    return false;
+  }
+  if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    return navigator.clipboard.writeText(link).catch(() => {
+      showWorkspaceLinkFallback(link);
+      return false;
+    });
+  }
+  showWorkspaceLinkFallback(link);
+  return false;
+}
+
+function ensureUniqueChannelId(baseId, channels) {
+  if (!Array.isArray(channels) || !channels.length) {
+    return baseId;
+  }
+  let candidate = baseId;
+  let attempt = 1;
+  while (channels.some(channel => channel.id === candidate)) {
+    candidate = `${baseId}-${attempt}`.slice(0, 24) || `${baseId}${generateRandomSegment(2).toLowerCase()}`;
+    attempt += 1;
+  }
+  return candidate;
+}
+
+function handleWorkspaceChannelCreate(workspace, rawName) {
+  if (!workspace) {
+    return false;
+  }
+  const name = (rawName || '').trim();
+  if (!name) {
+    return false;
+  }
+  const channels = Array.isArray(workspace.channels) ? workspace.channels : [];
+  const baseId = slugifyChannelName(name);
+  const id = ensureUniqueChannelId(baseId, channels);
+  channels.push({ id, name, created: Date.now() });
+  workspace.channels = channels;
+  saveWorkspace(workspace);
+  activeWorkspaceRecord = workspace;
+  activeWorkspaceView?.updateWorkspace(workspace);
+  return true;
+}
+
+function notifyWorkspaceSubpageChange(workspaceId, subpageId) {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function' || typeof CustomEvent !== 'function') {
+    return;
+  }
+  const detail = { workspaceId, subpage: subpageId };
+  window.dispatchEvent(new CustomEvent('workspace:subpage-change', { detail }));
+}
+
+function buildWorkspaceSubpages(workspace) {
+  return [
+    {
+      id: 'activity',
+      label: 'Activity',
+      render: (data) => {
+        const memberCount = Array.isArray(data.members) ? data.members.length : 0;
+        const channelCount = Array.isArray(data.channels) ? data.channels.length : 0;
+        const requests = Array.isArray(data.requests) ? data.requests : [];
+        const requestCount = requests.length;
+        const requestItems = requests.map(request => `
+          <li>
+            <span class="workspace-ui__requestName">${request.name || 'Pending member'}</span>
+            <span class="workspace-ui__requestMeta">${request.note || 'Awaiting review'}</span>
+          </li>
+        `).join('');
+        return `
+          <div class="workspace-ui__panel">
+            <h2>Workspace activity</h2>
+            <p class="workspace-ui__panelSummary">${memberCount} members · ${channelCount} channels · ${requestCount} requests</p>
+            <div class="workspace-ui__metricGrid">
+              <div class="workspace-ui__metric">
+                <span class="workspace-ui__metricLabel">Active invites</span>
+                <span class="workspace-ui__metricValue">${Math.max(1, Math.floor(memberCount / 2))}</span>
+              </div>
+            <div class="workspace-ui__metric">
+              <span class="workspace-ui__metricLabel">Pending approvals</span>
+              <span class="workspace-ui__metricValue">${requestCount}</span>
+            </div>
+          </div>
+          <div class="workspace-ui__requests" aria-live="polite">
+            <h3>Join requests</h3>
+              ${requests.length ? `<ul class="workspace-ui__panelList">${requestItems}</ul>` : '<p class="workspace-ui__panelEmpty">No pending requests.</p>'}
+          </div>
+        </div>
+      `;
+    }
+  },
+    {
+      id: 'visualizations',
+      label: 'Visualizations',
+      render: () => `
+        <div class="workspace-ui__panel">
+          <h2>Visualization modes</h2>
+          <p class="workspace-ui__panelSummary">Switch between dashboards to explore workspace data.</p>
+          <ul class="workspace-ui__panelList">
+            <li>Channel message volume</li>
+            <li>Member participation over time</li>
+            <li>Network routes and latency</li>
+          </ul>
+          <p class="workspace-ui__panelHint">Hook your data visualizations into this area to prototype alternate layouts.</p>
+        </div>
+      `
+    }
+  ];
+}
+
 function enterWorkspace(workspaceId) {
   const workspace = readWorkspace(workspaceId);
   if (!workspace) {
     return;
   }
 
+  if (typeof WorkspaceView !== 'function') {
+    console.error('WorkspaceView module is not loaded');
+    return;
+  }
+
+  activeWorkspaceRecord = workspace;
+
   const root = document.getElementById('workspaceRoot');
   if (root) {
     root.hidden = true;
   }
 
-  const existing = document.getElementById('activeWorkspaceView');
-  existing?.remove();
+  if (activeWorkspaceView) {
+    activeWorkspaceView.destroy();
+    activeWorkspaceView = null;
+  }
 
-  const workspaceUI = createWorkspaceUI(workspace);
-  workspaceUI.id = 'activeWorkspaceView';
-  document.body.appendChild(workspaceUI);
+  const container = document.createElement('div');
+  container.id = 'activeWorkspaceView';
+
+  const viewOptions = {
+    container,
+    subpages: buildWorkspaceSubpages(workspace),
+    fallbackLink: getWorkspaceShareLink(workspace),
+    onLeave: leaveWorkspaceView,
+    onCopyLink: () => handleWorkspaceLinkCopy(activeWorkspaceRecord),
+    onChannelCreate: (name) => handleWorkspaceChannelCreate(activeWorkspaceRecord, name),
+    onSubpageChange: (subpageId) => notifyWorkspaceSubpageChange(workspace.id, subpageId)
+  };
+
+  activeWorkspaceView = new WorkspaceView(workspace, viewOptions);
+  activeWorkspaceView.mount(document.body);
 
   const activeState = { workspaceId: workspace.id, channelId: workspace.channels[0]?.id || 'general' };
   try {
@@ -279,15 +454,19 @@ function enterWorkspace(workspaceId) {
 }
 
 function leaveWorkspaceView() {
-  const view = document.getElementById('activeWorkspaceView');
-  if (view) {
-    view.remove();
+  if (activeWorkspaceView) {
+    activeWorkspaceView.destroy();
+    activeWorkspaceView = null;
+  } else {
+    const view = document.getElementById('activeWorkspaceView');
+    view?.remove();
   }
   const root = document.getElementById('workspaceRoot');
   if (root) {
     root.hidden = false;
   }
   localStorage.removeItem(ACTIVE_WORKSPACE_KEY);
+  activeWorkspaceRecord = null;
   window.workspaceApp?.setActiveWorkspace(null);
   window.workspaceApp?.renderLanding();
   if (typeof window !== 'undefined') {
@@ -299,98 +478,6 @@ function leaveWorkspaceView() {
   if (window.App?.setWorkspaceContext) {
     window.App.setWorkspaceContext(null, { ensureIdentity: false });
   }
-}
-
-function createWorkspaceUI(workspace) {
-  const container = document.createElement('div');
-  container.className = 'workspace-ui';
-  const created = new Date(workspace.created || Date.now()).toLocaleString();
-  const inviteCode = workspace.inviteCode || '------';
-  const channels = workspace.channels.map(channel => `
-    <li data-channel-id="${channel.id}">
-      <span>#${channel.name}</span>
-      <time>${new Date(channel.created || workspace.created).toLocaleDateString()}</time>
-    </li>
-  `).join('');
-
-  const members = workspace.members.map(member => `
-    <li>
-      <div class="member-avatar">${member.name.charAt(0).toUpperCase()}</div>
-      <div class="member-info">
-        <span class="member-name">${member.name}</span>
-        <span class="member-meta">${member.role === 'owner' ? 'Owner' : 'Member'}</span>
-      </div>
-    </li>
-  `).join('') || '<li class="empty">No members yet.</li>';
-
-  container.innerHTML = `
-    <div class="workspace-ui__header">
-      <div>
-        <h1>${workspace.name}</h1>
-        <p>${workspace.description || 'No description provided.'}</p>
-        <div class="workspace-ui__meta">
-          <span>${workspace.type === 'public' ? 'Public workspace' : 'Private workspace'}</span>
-          <span>${formatJoinRule(workspace.joinRules)}</span>
-          <span>Created ${created}</span>
-        </div>
-      </div>
-      <div class="workspace-ui__actions">
-        <div class="invite-code" title="Invite code">Invite code: <strong>${inviteCode}</strong></div>
-        <button class="btn-secondary" data-action="copy-link">Copy Link</button>
-        <button class="btn-primary" data-action="leave">Back to Workspaces</button>
-      </div>
-    </div>
-    <div class="workspace-ui__layout">
-      <aside class="workspace-ui__sidebar">
-        <h2>Channels</h2>
-        <ul>${channels}</ul>
-        <button class="btn-text" data-action="add-channel">+ Add Channel</button>
-      </aside>
-      <section class="workspace-ui__main">
-        <div class="workspace-ui__welcome">
-          <h2>Welcome to #${workspace.channels[0]?.name || 'general'}</h2>
-          <p>This is the start of the channel. Share the invite code with teammates to collaborate.</p>
-        </div>
-      </section>
-      <aside class="workspace-ui__members">
-        <h2>Members (${workspace.members.length})</h2>
-        <ul>${members}</ul>
-      </aside>
-    </div>
-  `;
-
-  const leaveBtn = container.querySelector('[data-action="leave"]');
-  leaveBtn?.addEventListener('click', leaveWorkspaceView);
-
-  const copyLinkBtn = container.querySelector('[data-action="copy-link"]');
-  copyLinkBtn?.addEventListener('click', () => {
-    const link = `${window.location.origin}/#/${workspace.id}`;
-    navigator.clipboard?.writeText(link).then(() => {
-      copyLinkBtn.textContent = 'Link Copied!';
-      setTimeout(() => {
-        copyLinkBtn.textContent = 'Copy Link';
-      }, 1600);
-    }).catch(() => {
-      alert(`Workspace link: ${link}`);
-    });
-  });
-
-  const addChannelBtn = container.querySelector('[data-action="add-channel"]');
-  addChannelBtn?.addEventListener('click', () => {
-    const name = prompt('Channel name');
-    if (!name) {
-      return;
-    }
-    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24) || generateRandomSegment(6).toLowerCase();
-    workspace.channels.push({ id: slug, name, created: Date.now() });
-    saveWorkspace(workspace);
-    const list = container.querySelector('.workspace-ui__sidebar ul');
-    if (list) {
-      list.insertAdjacentHTML('beforeend', `<li data-channel-id="${slug}"><span>#${name}</span><time>${new Date().toLocaleDateString()}</time></li>`);
-    }
-  });
-
-  return container;
 }
 
 function initializeWorkspaceConnections(workspace) {
