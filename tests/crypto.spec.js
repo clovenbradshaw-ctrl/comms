@@ -97,6 +97,20 @@ async function main() {
   invite.signature = await SecureInvite.signInvite(invite.roomId, invite.seatId, invite.secretKey, invite.expiresAt);
   assert.ok(await SecureInvite.verifyInviteSignature(invite), 'Invite signature should validate');
 
+  const compactInvite = {
+    r: invite.roomId,
+    s: invite.seatId,
+    k: invite.secretKey,
+    e: invite.expiresAt,
+    sig: invite.signature
+  };
+
+  const encryptedInvite = await SecureInvite.encryptInvitePayload(compactInvite);
+  assert.ok(encryptedInvite?.cipher && encryptedInvite?.key, 'Encrypted invite should include cipher and key');
+
+  const decryptedInvite = await SecureInvite.decryptInvitePayload(encryptedInvite.cipher, encryptedInvite.key);
+  assert.deepStrictEqual(decryptedInvite, compactInvite, 'Decrypted invite should match the original payload');
+
   const manager = new InviteManager();
   if (manager?.ready && typeof manager.ready.then === 'function') {
     await manager.ready;
