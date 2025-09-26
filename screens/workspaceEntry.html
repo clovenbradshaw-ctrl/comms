@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <meta name="description" content="Secure P2P chat with end-to-end encryption">
+  <title>Secure P2P Chat &mdash; Workspace Entry</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+  <div id="workspaceRoot" class="workspace-app" role="main">
+    <header class="workspace-hero">
+      <div class="hero-content">
+        <div class="hero-badge">Persistent Workspaces</div>
+        <h1>Build a secure home for every team</h1>
+        <p>Create Slack-style hubs with invite rules, approval workflows, and reusable channels that never disappear.</p>
+        <div class="hero-actions">
+          <button id="createWorkspaceBtn" class="btn-primary large">
+            <span class="btn-icon">✨</span>
+            <span>Create a workspace</span>
+          </button>
+          <button id="findWorkspaceBtn" class="btn-secondary large">
+            <span class="btn-icon">🔍</span>
+            <span>Join with an invite</span>
+          </button>
+        </div>
+      </div>
+      <div class="hero-stats" id="workspaceHeroStats" aria-live="polite"></div>
+    </header>
+
+    <main id="workspaceContent" class="workspace-content" aria-live="polite"></main>
+  </div>
+</body>
+</html>
