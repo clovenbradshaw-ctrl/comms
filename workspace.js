@@ -776,7 +776,8 @@ class WorkspaceApp {
       draft: null,
       joinTarget: null,
       resultWorkspace: null,
-      memberProfile: null
+      memberProfile: null,
+      plainPassword: ''
     };
 
     if (this.root) {
@@ -813,7 +814,8 @@ class WorkspaceApp {
         draft: null,
         joinTarget: null,
         resultWorkspace: null,
-        memberProfile: null
+        memberProfile: null,
+        plainPassword: ''
       };
     }
 
@@ -846,9 +848,14 @@ class WorkspaceApp {
     ];
 
     const stepper = steps.map((step, index) => `
-      <div class="flow-step" data-step-index="${step.id}" data-state="pending">
-        <span class="step-index">${index + 1}</span>
-        <span>${step.label}</span>
+      <div
+        class="flow-step"
+        data-step-index="${step.id}"
+        data-step-order="${index + 1}"
+        data-state="pending"
+      >
+        <span class="step-number" aria-hidden="true">${index + 1}</span>
+        <span class="step-label">${step.label}</span>
       </div>
     `).join('');
 
@@ -906,12 +913,23 @@ class WorkspaceApp {
     this.stepIndicators.forEach(stepEl => {
       const stepId = stepEl.getAttribute('data-step-index');
       const position = stepOrder.indexOf(stepId);
+      const order = Number.parseInt(stepEl.getAttribute('data-step-order'), 10) || position + 1;
+      const number = stepEl.querySelector('.step-number');
       if (position < currentIndex) {
         stepEl.dataset.state = 'complete';
+        if (number) {
+          number.textContent = '✓';
+        }
       } else if (position === currentIndex) {
         stepEl.dataset.state = 'active';
+        if (number) {
+          number.textContent = `${order}`;
+        }
       } else {
         stepEl.dataset.state = 'pending';
+        if (number) {
+          number.textContent = `${order}`;
+        }
       }
     });
 
@@ -1306,6 +1324,7 @@ class WorkspaceApp {
     this.flowState.mode = 'create';
     this.flowState.step = 'success';
     this.flowState.memberProfile = profile;
+    this.flowState.plainPassword = password || '';
     this.flowState.draft = null;
     this.updateAfterWorkspaceChange();
     this.updateFlowUI();
@@ -1584,6 +1603,7 @@ class WorkspaceApp {
     this.flowState.step = 'success';
     this.flowState.mode = 'join';
     this.flowState.memberProfile = profile;
+    this.flowState.plainPassword = '';
     this.updateAfterWorkspaceChange();
     this.updateFlowUI();
     this.scrollFlowIntoView();
@@ -1596,61 +1616,76 @@ class WorkspaceApp {
       return;
     }
 
-    const inviteLink = `${window.location.origin}/#/${workspace.id}`;
+    const inviteLink = escapeHTML(getWorkspaceShareLink(workspace));
     const mode = this.flowState.mode || 'create';
     const badgeText = mode === 'create' ? 'Workspace ready' : 'Access granted';
-    const heading = mode === 'create' ? 'You just unlocked a secure workspace.' : 'You’re in. Say hello to your teammates!';
-    const memberProfile = this.flowState.memberProfile;
-    const memberRow = memberProfile ? `
-          <div class="success-meta__row">
-            <span>🧑‍💻</span>
-            <span>Your workspace username</span>
-            <strong>${escapeHTML(memberProfile.name)}</strong>
-          </div>
+    const heading = mode === 'create' ? 'Workspace ready!' : 'Access secured!';
+    const inviteCode = escapeHTML(workspace.inviteCode || '------');
+    const hasPassword = Boolean(workspace.security?.passwordEnabled);
+    const plainPassword = this.flowState.plainPassword || '';
+    const canShowPassword = hasPassword && plainPassword;
+    const passwordCard = hasPassword ? `
+      <div class="credential-card secondary">
+        <div class="credential-label">
+          <span aria-hidden="true">🔐</span>
+          Workspace password
+        </div>
+        <div class="credential-value${canShowPassword ? '' : ' credential-value--muted'}">
+          ${canShowPassword ? escapeHTML(plainPassword) : 'Only workspace owners can share the password.'}
+        </div>
+        ${canShowPassword ? `
+          <button class="copy-btn" type="button" data-copy-value="${escapeHTML(plainPassword)}">
+            Copy password
+          </button>
+        ` : ''}
+      </div>
     ` : '';
+    const warningText = hasPassword
+      ? 'Share the encrypted link and workspace password through different channels. Members will need both credentials plus their own 2FA to access the workspace.'
+      : 'Share this encrypted link only with trusted teammates. Two-factor approvals keep your workspace secure.';
 
     this.flowBody.innerHTML = `
-      <div class="success-panel">
-        <span class="success-panel__badge">${badgeText}</span>
-        <h3>${heading}</h3>
-        <div class="success-panel__meta">
-          <div class="success-meta__row">
-            <span>🔑</span>
-            <span>Invite code</span>
-            <code>${workspace.inviteCode}</code>
-          </div>
-          <div class="success-meta__row">
-            <span>🔗</span>
-            <span>Share link</span>
-            <code>${inviteLink}</code>
-          </div>
-          ${memberRow}
-          ${workspace.security?.passwordEnabled ? `
-            <div class="success-meta__row">
-              <span>🛡️</span>
-              <span>Password strength</span>
-              <strong>${workspace.security.passwordStrength || 'protected'}</strong>
-            </div>
-          ` : ''}
-          ${workspace.security?.twoFactor ? `
-            <div class="success-meta__row">
-              <span>✅</span>
-              <span>Two-factor approvals required</span>
-            </div>
-          ` : ''}
+      <div class="success-container" data-badge="${badgeText}">
+        <div class="success-icon" aria-hidden="true">✓</div>
+        <h3 class="success-title">${heading}</h3>
+        <p class="success-subtitle">Your secure workspace has been created with multi-layer protection.</p>
+
+        <div class="invite-code-display">
+          <span class="invite-code-label">Quick access code</span>
+          <code class="invite-code">${inviteCode}</code>
         </div>
-        <div class="success-panel__actions">
-          <button type="button" class="btn-primary" data-action="enter-workspace" data-workspace-id="${workspace.id}">
-            <span class="btn-icon">➡️</span>
-            <span class="btn-label">Open workspace</span>
+
+        <div class="credentials-grid">
+          <div class="credential-card primary">
+            <div class="credential-label">
+              <span aria-hidden="true">🔗</span>
+              Encrypted workspace link
+            </div>
+            <div class="credential-value credential-value--code">
+              ${inviteLink}
+            </div>
+            <button class="copy-btn" type="button" data-copy-value="${inviteLink}">
+              Copy encrypted link
+            </button>
+          </div>
+          ${passwordCard}
+        </div>
+
+        <div class="warning-box" role="alert">
+          <span class="warning-icon" aria-hidden="true">⚠️</span>
+          <div class="warning-content">
+            <p class="warning-title">Security best practice</p>
+            <p class="warning-text">${warningText}</p>
+          </div>
+        </div>
+
+        <div class="success-actions">
+          <button type="button" class="btn btn-primary" data-action="enter-workspace" data-workspace-id="${workspace.id}">
+            <span aria-hidden="true">🚀</span>
+            <span>Open workspace</span>
           </button>
-          <button type="button" class="btn-secondary" data-action="copy-invite" data-link="${inviteLink}">
-            <span class="btn-icon">📋</span>
-            <span class="btn-label">Copy invite link</span>
-          </button>
-          <button type="button" class="btn-secondary" data-action="reset-flow">
-            <span class="btn-icon">➕</span>
-            <span class="btn-label">Start another</span>
+          <button type="button" class="btn btn-secondary" data-action="reset-flow">
+            Start another setup
           </button>
         </div>
       </div>
@@ -1665,15 +1700,20 @@ class WorkspaceApp {
       enterWorkspace(id);
     });
 
-    this.flowBody.querySelector('[data-action="copy-invite"]')?.addEventListener('click', async event => {
-      const link = event.currentTarget.getAttribute('data-link');
-      try {
-        await navigator.clipboard?.writeText(link);
-        event.currentTarget.classList.add('copied');
-        setTimeout(() => event.currentTarget.classList.remove('copied'), 1200);
-      } catch (error) {
-        window.alert(`Invite link: ${link}`);
-      }
+    this.flowBody.querySelectorAll('[data-copy-value]')?.forEach(button => {
+      button.addEventListener('click', async event => {
+        const value = event.currentTarget.getAttribute('data-copy-value');
+        if (!value) {
+          return;
+        }
+        try {
+          await navigator.clipboard?.writeText(value);
+          event.currentTarget.classList.add('copied');
+          setTimeout(() => event.currentTarget.classList.remove('copied'), 1200);
+        } catch (error) {
+          showWorkspaceLinkFallback(value);
+        }
+      });
     });
 
     this.flowBody.querySelector('[data-action="reset-flow"]')?.addEventListener('click', () => this.resetFlow());
@@ -1793,7 +1833,8 @@ class WorkspaceApp {
       draft: null,
       joinTarget: null,
       resultWorkspace: null,
-      memberProfile: null
+      memberProfile: null,
+      plainPassword: ''
     };
     this.currentJoinSearch = '';
     this.updateFlowUI();
@@ -1813,6 +1854,7 @@ class WorkspaceApp {
       this.flowState.joinTarget = null;
       this.flowState.resultWorkspace = null;
       this.flowState.memberProfile = null;
+      this.flowState.plainPassword = '';
       if (mode === 'join') {
         this.currentJoinSearch = '';
       }
