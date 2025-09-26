@@ -31,5 +31,187 @@
 
     <main id="workspaceContent" class="workspace-content" aria-live="polite"></main>
   </div>
+
+  <div class="app legacy-app" role="main" id="legacyApp" hidden>
+    <div class="header">
+      <div class="logo">
+        <div class="logo-icon">🔐</div>
+        <span class="logo-text">Secure Chat</span>
+      </div>
+      <div class="connection-area">
+        <div class="connection-badge">
+          <span class="status-dot" id="statusDot"></span>
+          <span id="statusText">Disconnected</span>
+        </div>
+        <div class="fingerprint" id="fingerprintDisplay">
+          <span class="fingerprint-label">Verify Connection</span>
+          <span class="fingerprint-code" id="fingerprintCode">Waiting for secure connection…</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="welcomeScreen" class="screen active">
+      <div class="welcome">
+        <div class="welcome-card">
+          <h1>Secure P2P Chat</h1>
+          <p>End-to-end encrypted messaging with no servers. Your messages stay on your device.</p>
+
+          <div class="features">
+            <div class="feature">
+              <div class="feature-icon">🔐</div>
+              <div class="feature-text">E2E Encrypted</div>
+            </div>
+            <div class="feature">
+              <div class="feature-icon">🌐</div>
+              <div class="feature-text">No Servers</div>
+            </div>
+            <div class="feature">
+              <div class="feature-icon">💾</div>
+              <div class="feature-text">Local Storage</div>
+            </div>
+          </div>
+
+          <div class="action-buttons">
+            <button class="btn btn-primary" onclick="App.showHost()">
+              <span>🏠</span>
+              <span>Create Room</span>
+            </button>
+            <button class="btn btn-secondary" onclick="App.showJoin()">
+              <span>🔗</span>
+              <span>Join Room</span>
+            </button>
+            <button class="btn btn-ghost" type="button" onclick="App.exitToWorkspace()">
+              <span>🏢</span>
+              <span>Workspaces</span>
+            </button>
+          </div>
+
+          <div id="roomHistory" class="room-history">
+            <div id="roomHistoryContent"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="hostScreen" class="screen">
+      <div class="setup-screen">
+        <div class="setup-card">
+          <h2>Create Secure Room</h2>
+          <p class="setup-subtitle">Share this room code with someone you trust</p>
+
+          <div class="room-code-display" id="roomCode" onclick="App.copyRoomCode()" role="button" tabindex="0" aria-label="Copy room code">
+            Loading...
+          </div>
+
+          <button class="btn btn-primary" style="width: 100%;" onclick="App.startHost()">
+            Generate Secure Invite
+          </button>
+
+          <div id="shareSection" class="share-section" style="display: none;">
+            <div class="invite-section" id="inviteSection">
+              <h3>🎟️ Secure One-Time Invite</h3>
+              <p>This link works only once and expires in 15 minutes.</p>
+
+              <div class="invite-link-container">
+                <input id="inviteLink" class="invite-input" readonly value="Generating secure link..." aria-live="polite">
+                <button id="copyInviteBtn" class="btn btn-primary">📋 Copy Secure Link</button>
+              </div>
+
+              <div class="security-info">
+                ✅ No passwords needed<br>
+                ✅ Single-use only<br>
+                ✅ Auto-expires<br>
+                ✅ Cryptographically secure
+              </div>
+
+              <div class="simple-setup">
+                <label class="input-label" for="simpleEmail">Simple setup (optional)</label>
+                <input type="email" id="simpleEmail" class="input-field" placeholder="Invite email (leave blank to use device share)">
+                <button class="btn btn-secondary" style="width: 100%;" onclick="App.simpleShareInvite()">✨ Simple Setup: Share Invite</button>
+                <div id="simpleShareStatus" class="simple-status"></div>
+              </div>
+            </div>
+          </div>
+
+          <button class="btn btn-secondary" style="width: 100%; margin-top: 1rem;" onclick="App.showWelcome()">
+            Back
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="joinScreen" class="screen">
+      <div class="setup-screen">
+        <div class="setup-card">
+          <h2>Join Secure Room</h2>
+          <p class="setup-subtitle">Use the secure invite link sent to you</p>
+
+          <div class="joining-status">
+            <div class="spinner" id="joinSpinner"></div>
+            <p id="joinStatus" tabindex="-1">Claiming your secure seat...</p>
+            <p class="small" id="joinStatusDetail">Verifying one-time token...</p>
+          </div>
+
+          <button class="btn btn-secondary" style="width: 100%; margin-top: 1rem;" onclick="App.showWelcome()">
+            Back
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="identityModal" class="identity-modal" role="dialog" aria-modal="true" aria-labelledby="identityModalTitle" hidden>
+    <div class="identity-dialog">
+      <div class="identity-header">
+        <h3 id="identityModalTitle">Choose Your Identity</h3>
+        <p id="identityModalSubtitle">Secure your seat in this room</p>
+      </div>
+
+      <div id="identityModeCreate" class="identity-section">
+        <form id="identityCreateForm" novalidate>
+          <div class="identity-block">
+            <label for="identityNameInput">Pick a display name</label>
+            <div id="identitySuggestions" class="name-suggestions"></div>
+            <div class="input-with-action">
+              <input type="text" id="identityNameInput" maxlength="30" placeholder="Or type your own…" autocomplete="off">
+              <button type="button" id="identityRefreshBtn" class="refresh-btn">🎲 New suggestions</button>
+            </div>
+          </div>
+
+          <div class="identity-block">
+            <label for="identityPasswordInput">Create a password</label>
+            <div class="password-strength">
+              <input type="password" id="identityPasswordInput" placeholder="Create room password" autocomplete="new-password" required>
+              <div id="identityStrengthBar" class="strength-bar" data-strength="0"></div>
+              <span id="identityStrengthText" class="strength-text">Choose a strong password</span>
+            </div>
+          </div>
+
+          <div class="identity-actions">
+            <button type="submit" class="btn btn-primary" id="identitySubmitBtn">Join Secure Room</button>
+            <button type="button" class="btn btn-secondary" id="identityModeReturningBtn">Already have a password?</button>
+          </div>
+        </form>
+      </div>
+
+      <div id="identityModeReturning" class="identity-section" hidden>
+        <form id="identityReturningForm" novalidate>
+          <div class="identity-block">
+            <p class="help-text">Enter your password to rejoin as <strong id="identityHint">You</strong></p>
+            <input type="password" id="identityReturningPassword" placeholder="Enter your room password" autocomplete="current-password" required>
+          </div>
+
+          <div class="identity-actions">
+            <button type="submit" class="btn btn-primary">Rejoin Secure Room</button>
+            <button type="button" class="btn btn-secondary" id="identityUseNew">Join as someone new</button>
+          </div>
+        </form>
+      </div>
+
+      <div id="identityError" class="identity-error" role="alert" aria-live="assertive" hidden></div>
+    </div>
+  </div>
+
+  <script src="workspaceEntry.js"></script>
 </body>
 </html>
