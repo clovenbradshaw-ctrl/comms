@@ -4761,6 +4761,23 @@
   align-items: flex-end;
 }
 
+.workspace-share {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  text-align: right;
+  max-width: min(320px, 100%);
+}
+
+.workspace-share__label {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.workspace-share .workspace-url {
+  word-break: break-word;
+}
+
 .workspace-ui__layout {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr) 260px;
