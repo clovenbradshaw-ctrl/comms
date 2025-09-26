@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Workspace View Prototype</title>
+  <link rel="stylesheet" href="../styles.css">
+  <style>
+    body {
+      margin: 0;
+      padding: 2rem;
+      background: var(--surface-elevated, #f5f5f5);
+      font-family: var(--font-sans, 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+      color: var(--text-primary, #111);
+    }
+
+    .prototype-wrapper {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .prototype-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .prototype-toolbar select,
+    .prototype-toolbar button {
+      padding: 0.5rem 1rem;
+      border-radius: 0.75rem;
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      background: #fff;
+      font-size: 0.95rem;
+      cursor: pointer;
+    }
+
+    .prototype-toolbar button {
+      background: #111;
+      color: #fff;
+    }
+
+    #prototypeWorkspace {
+      position: relative;
+    }
+  </style>
+</head>
+<body>
+  <div class="prototype-wrapper">
+    <div class="prototype-toolbar">
+      <label>
+        Workspace
+        <select id="prototypeWorkspaceSelect"></select>
+      </label>
+      <button type="button" id="prototypeAddMember">Add Random Member</button>
+      <button type="button" id="prototypeAddChannel">Add Random Channel</button>
+    </div>
+    <div id="prototypeWorkspace"></div>
+  </div>
+
+  <script src="../lib/workspace-view.js"></script>
+  <script src="workspaceView.js"></script>
+</body>
+</html>
