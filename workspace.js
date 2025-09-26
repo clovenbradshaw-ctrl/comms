@@ -267,6 +267,9 @@ function enterWorkspace(workspaceId) {
 
   window.workspaceApp?.setActiveWorkspace(workspace.id);
   initializeWorkspaceConnections(workspace);
+  if (window.App?.setWorkspaceContext) {
+    window.App.setWorkspaceContext(workspace.id);
+  }
 }
 
 function leaveWorkspaceView() {
@@ -281,6 +284,9 @@ function leaveWorkspaceView() {
   localStorage.removeItem(ACTIVE_WORKSPACE_KEY);
   window.workspaceApp?.setActiveWorkspace(null);
   window.workspaceApp?.renderLanding();
+  if (window.App?.setWorkspaceContext) {
+    window.App.setWorkspaceContext(null, { ensureIdentity: false });
+  }
 }
 
 function createWorkspaceUI(workspace) {

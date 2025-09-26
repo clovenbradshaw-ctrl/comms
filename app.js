@@ -1276,6 +1276,7 @@ class SecureChat {
         this.entryScreen = new WorkspaceEntryScreen(this);
         this.pendingReentryRequest = null;
         this.activeRoomContextMode = null;
+        this.activeWorkspaceId = null;
         this.cryptoUpdates = CryptoManager.onUpdated((update) => {
           const fingerprint = update?.fingerprint || '';
           this.latestFingerprint = fingerprint;
@@ -1535,9 +1536,15 @@ class SecureChat {
       }
 
       async handleIdentityCreateSubmit() {
-        if (!this.identityManager) {
+        const scopeId = this.getIdentityScope();
+        if (!scopeId) {
+          this.showIdentityError('Open or create a workspace before setting up your identity.');
+          return;
+        }
+
+        if (!this.identityManager || this.identityManager.roomId !== scopeId) {
           try {
-            this.identityManager = new RoomIdentity(this.roomId);
+            this.identityManager = new RoomIdentity(scopeId);
           } catch (error) {
             console.warn('Unable to initialise room identity manager.', error);
             this.showIdentityError('Identity service unavailable in this browser.');
@@ -1570,9 +1577,15 @@ class SecureChat {
       }
 
       async handleIdentityReturningSubmit() {
-        if (!this.identityManager) {
+        const scopeId = this.getIdentityScope();
+        if (!scopeId) {
+          this.showIdentityError('Select a workspace before unlocking a saved identity.');
+          return;
+        }
+
+        if (!this.identityManager || this.identityManager.roomId !== scopeId) {
           try {
-            this.identityManager = new RoomIdentity(this.roomId);
+            this.identityManager = new RoomIdentity(scopeId);
           } catch (error) {
             this.showIdentityError('Identity service unavailable.');
             return;
@@ -1602,13 +1615,14 @@ class SecureChat {
       }
 
       async prepareIdentity() {
-        if (!this.roomId || typeof RoomIdentity !== 'function') {
+        const scopeId = this.getIdentityScope();
+        if (!scopeId || typeof RoomIdentity !== 'function') {
           return null;
         }
 
-        if (!this.identityManager || this.identityManager.roomId !== this.roomId) {
+        if (!this.identityManager || this.identityManager.roomId !== scopeId) {
           try {
-            this.identityManager = new RoomIdentity(this.roomId);
+            this.identityManager = new RoomIdentity(scopeId);
           } catch (error) {
             console.warn('Unable to initialise identity manager.', error);
             return null;
@@ -1621,7 +1635,7 @@ class SecureChat {
         }
 
         try {
-          const stored = await this.identityManager.storage.getRoomIdentity(this.roomId);
+          const stored = await this.identityManager.storage.getRoomIdentity(scopeId);
           if (stored) {
             const identity = await this.showIdentityModal('returning', { stored });
             if (identity) {
@@ -1759,6 +1773,13 @@ class SecureChat {
         this.identityManager = null;
         this.clearIdentityAnnouncement();
         this.roomMembers?.reset?.();
+      }
+
+      getIdentityScope() {
+        if (typeof this.activeWorkspaceId === 'string' && this.activeWorkspaceId) {
+          return `workspace:${this.activeWorkspaceId}`;
+        }
+        return this.roomId;
       }
 
       setRoomContextMode(mode = null) {
@@ -2366,6 +2387,7 @@ This invite can be used only once. Share the link privately.`;
           this.legacyRoot.removeAttribute('hidden');
         }
         this.isLegacyMode = true;
+        this.setWorkspaceContext(null, { resetIdentity: false, ensureIdentity: false });
       }
 
       useWorkspaceLayout() {
@@ -2376,6 +2398,42 @@ This invite can be used only once. Share the link privately.`;
           this.workspaceRoot.removeAttribute('hidden');
         }
         this.isLegacyMode = false;
+        this.setWorkspaceContext(null, { resetIdentity: false, ensureIdentity: false });
+      }
+
+      setWorkspaceContext(workspaceId, options = {}) {
+        const normalized = typeof workspaceId === 'string' && workspaceId.trim()
+          ? workspaceId.trim()
+          : null;
+        const {
+          ensureIdentity = true,
+          resetIdentity = true
+        } = options;
+
+        if (normalized === this.activeWorkspaceId) {
+          if (normalized && ensureIdentity) {
+            this.prepareIdentity().catch((error) => {
+              console.warn('Failed to prepare identity for workspace.', error);
+            });
+          }
+          return;
+        }
+
+        this.activeWorkspaceId = normalized;
+
+        if (resetIdentity) {
+          this.resetIdentityState({ preserveLocal: false });
+        } else if (!normalized) {
+          this.identityManager = null;
+        }
+
+        if (!normalized || !ensureIdentity) {
+          return;
+        }
+
+        this.prepareIdentity().catch((error) => {
+          console.warn('Failed to prepare identity for workspace.', error);
+        });
       }
 
       handleHomeRoute() {
