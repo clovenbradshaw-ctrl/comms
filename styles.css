@@ -3703,6 +3703,22 @@
   gap: 1rem;
 }
 
+.workspace-message {
+  background: #e0f2fe;
+  color: #0c4a6e;
+  border: 1px solid #bae6fd;
+  border-radius: 12px;
+  padding: 0.875rem 1rem;
+  margin-bottom: 1rem;
+  font-weight: 500;
+}
+
+.workspace-message[data-variant="error"] {
+  background: #fee2e2;
+  border-color: #fecaca;
+  color: #7f1d1d;
+}
+
 @media (min-width: 600px) {
   .workspace-empty__actions {
     flex-direction: row;

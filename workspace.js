@@ -2,8 +2,26 @@ const WORKSPACE_STORAGE_PREFIX = 'workspace_';
 const ACTIVE_WORKSPACE_KEY = 'workspace_active';
 const LOCAL_PROFILE_KEY = 'workspace_profile';
 
+// Polling configuration for waiting on the WorkspaceView module to initialise.
+const WORKSPACE_VIEW_POLL_INTERVAL = 60;
+const WORKSPACE_VIEW_POLL_LIMIT = 80;
+
 let activeWorkspaceView = null;
 let activeWorkspaceRecord = null;
+let workspaceViewReadyPromise = null;
+
+// Lightweight HTML escaping helper so status messages are safe to inject.
+function escapeHTML(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 function normalizeWorkspaceCode(value) {
   if (!value) {
@@ -140,19 +158,35 @@ function listWorkspaces() {
   return workspaces;
 }
 
+// Persist a workspace record to localStorage, returning a boolean for easy error handling.
 function saveWorkspace(workspace) {
+  if (!workspace || !workspace.id) {
+    return false;
+  }
+
   const key = getWorkspaceStorageKey(workspace.id);
-  const payload = JSON.stringify(workspace);
-  localStorage.setItem(key, payload);
+
+  try {
+    const payload = JSON.stringify(workspace);
+    localStorage.setItem(key, payload);
+    return true;
+  } catch (error) {
+    console.warn('Unable to persist workspace to storage', error);
+    return false;
+  }
 }
 
+// Read, update and persist a workspace record in one go. The updater should be pure.
 function updateWorkspace(workspaceId, updater) {
   const existing = readWorkspace(workspaceId);
   if (!existing) {
     return null;
   }
-  const next = ensureWorkspaceShape({ ...existing, ...updater(existing) });
-  saveWorkspace(next);
+  const updates = typeof updater === 'function' ? updater(existing) : {};
+  const next = ensureWorkspaceShape({ ...existing, ...(updates || {}) });
+  if (!saveWorkspace(next)) {
+    return null;
+  }
   return next;
 }
 
@@ -310,6 +344,7 @@ function ensureUniqueChannelId(baseId, channels) {
   return candidate;
 }
 
+// Adds a new channel to the active workspace with storage + UI updates.
 function handleWorkspaceChannelCreate(workspace, rawName) {
   if (!workspace) {
     return false;
@@ -318,14 +353,23 @@ function handleWorkspaceChannelCreate(workspace, rawName) {
   if (!name) {
     return false;
   }
-  const channels = Array.isArray(workspace.channels) ? workspace.channels : [];
-  const baseId = slugifyChannelName(name);
-  const id = ensureUniqueChannelId(baseId, channels);
-  channels.push({ id, name, created: Date.now() });
-  workspace.channels = channels;
-  saveWorkspace(workspace);
-  activeWorkspaceRecord = workspace;
-  activeWorkspaceView?.updateWorkspace(workspace);
+
+  const next = updateWorkspace(workspace.id, current => {
+    const safeCurrent = ensureWorkspaceShape(current);
+    const channels = Array.isArray(safeCurrent.channels) ? [...safeCurrent.channels] : [];
+    const baseId = slugifyChannelName(name);
+    const id = ensureUniqueChannelId(baseId, channels);
+    channels.push({ id, name, created: Date.now() });
+    return { channels };
+  });
+
+  if (!next) {
+    window.workspaceApp?.showWorkspaceAccessError?.('Unable to add a channel right now. Please try again.');
+    return false;
+  }
+
+  activeWorkspaceRecord = next;
+  activeWorkspaceView?.updateWorkspace(next);
   return true;
 }
 
@@ -394,18 +438,82 @@ function buildWorkspaceSubpages(workspace) {
   ];
 }
 
-function enterWorkspace(workspaceId) {
-  const workspace = readWorkspace(workspaceId);
+// Waits until the WorkspaceView constructor is available before rendering.
+function waitForWorkspaceView(timeout = WORKSPACE_VIEW_POLL_INTERVAL * WORKSPACE_VIEW_POLL_LIMIT) {
+  if (typeof WorkspaceView === 'function') {
+    return Promise.resolve(WorkspaceView);
+  }
+
+  if (workspaceViewReadyPromise) {
+    return workspaceViewReadyPromise;
+  }
+
+  workspaceViewReadyPromise = new Promise((resolve, reject) => {
+    const deadline = Date.now() + timeout;
+
+    const check = () => {
+      if (typeof WorkspaceView === 'function') {
+        resolve(WorkspaceView);
+        workspaceViewReadyPromise = null;
+        return;
+      }
+      if (Date.now() > deadline) {
+        reject(new Error('WorkspaceView module did not load in time.'));
+        workspaceViewReadyPromise = null;
+        return;
+      }
+      setTimeout(check, WORKSPACE_VIEW_POLL_INTERVAL);
+    };
+
+    check();
+  });
+
+  return workspaceViewReadyPromise;
+}
+
+// Entry point used by buttons/cards to launch the workspace shell.
+async function enterWorkspace(workspaceIdOrCode) {
+  const raw = String(workspaceIdOrCode || '').trim();
+  const normalized = normalizeWorkspaceCode(raw);
+  if (!raw && !normalized) {
+    return;
+  }
+
+  const lookupCandidates = [];
+  if (raw) {
+    lookupCandidates.push(raw);
+  }
+  if (normalized && normalized !== raw) {
+    lookupCandidates.push(normalized);
+  }
+
+  let workspace = null;
+  for (const candidate of lookupCandidates) {
+    workspace = readWorkspace(candidate);
+    if (workspace) {
+      break;
+    }
+  }
+
+  if (!workspace && normalized) {
+    workspace = getWorkspaceByInvite(normalized) || getWorkspaceByInvite(raw);
+  }
+
   if (!workspace) {
+    window.workspaceApp?.showWorkspaceAccessError?.('We could not find that workspace. It may have been removed.');
     return;
   }
 
-  if (typeof WorkspaceView !== 'function') {
-    console.error('WorkspaceView module is not loaded');
+  try {
+    await waitForWorkspaceView();
+  } catch (error) {
+    console.error('Workspace view failed to load', error);
+    window.workspaceApp?.showWorkspaceAccessError?.('The workspace interface is still loading. Please try again in a moment.');
     return;
   }
 
-  activeWorkspaceRecord = workspace;
+  const safeWorkspace = ensureWorkspaceShape(workspace);
+  activeWorkspaceRecord = safeWorkspace;
 
   const root = document.getElementById('workspaceRoot');
   if (root) {
@@ -413,7 +521,11 @@ function enterWorkspace(workspaceId) {
   }
 
   if (activeWorkspaceView) {
-    activeWorkspaceView.destroy();
+    try {
+      activeWorkspaceView.destroy();
+    } catch (error) {
+      console.warn('Unable to clean up previous workspace view', error);
+    }
     activeWorkspaceView = null;
   }
 
@@ -422,34 +534,43 @@ function enterWorkspace(workspaceId) {
 
   const viewOptions = {
     container,
-    subpages: buildWorkspaceSubpages(workspace),
-    fallbackLink: getWorkspaceShareLink(workspace),
+    subpages: buildWorkspaceSubpages(safeWorkspace),
+    fallbackLink: getWorkspaceShareLink(safeWorkspace),
     onLeave: leaveWorkspaceView,
     onCopyLink: () => handleWorkspaceLinkCopy(activeWorkspaceRecord),
     onChannelCreate: (name) => handleWorkspaceChannelCreate(activeWorkspaceRecord, name),
-    onSubpageChange: (subpageId) => notifyWorkspaceSubpageChange(workspace.id, subpageId)
+    onSubpageChange: (subpageId) => notifyWorkspaceSubpageChange(safeWorkspace.id, subpageId)
   };
 
-  activeWorkspaceView = new WorkspaceView(workspace, viewOptions);
-  activeWorkspaceView.mount(document.body);
+  try {
+    activeWorkspaceView = new WorkspaceView(safeWorkspace, viewOptions);
+    activeWorkspaceView.mount(document.body);
+  } catch (error) {
+    console.error('Unable to mount workspace view', error);
+    activeWorkspaceView = null;
+    window.workspaceApp?.showWorkspaceAccessError?.('We hit a snag opening that workspace. Refresh and try again.');
+    return;
+  }
 
-  const activeState = { workspaceId: workspace.id, channelId: workspace.channels[0]?.id || 'general' };
+  window.workspaceApp?.clearLibraryMessage?.();
+
+  const activeState = { workspaceId: safeWorkspace.id, channelId: safeWorkspace.channels[0]?.id || 'general' };
   try {
     localStorage.setItem(ACTIVE_WORKSPACE_KEY, JSON.stringify(activeState));
   } catch (error) {
     console.warn('Unable to persist active workspace', error);
   }
 
-  window.workspaceApp?.setActiveWorkspace(workspace.id);
+  window.workspaceApp?.setActiveWorkspace(safeWorkspace.id);
   if (typeof window !== 'undefined') {
-    const targetHash = `#/workspace/${workspace.id}`;
+    const targetHash = `#/workspace/${safeWorkspace.id}`;
     if (window.location.hash !== targetHash) {
       window.location.hash = targetHash;
     }
   }
-  initializeWorkspaceConnections(workspace);
+  initializeWorkspaceConnections(safeWorkspace);
   if (window.App?.setWorkspaceContext) {
-    window.App.setWorkspaceContext(workspace.id);
+    window.App.setWorkspaceContext(safeWorkspace.id);
   }
   if (root) {
     root.hidden = true;
@@ -472,6 +593,7 @@ function leaveWorkspaceView() {
   activeWorkspaceRecord = null;
   window.workspaceApp?.setActiveWorkspace(null);
   window.workspaceApp?.renderLanding();
+  window.workspaceApp?.clearLibraryMessage?.();
   if (typeof window !== 'undefined') {
     const currentHash = window.location.hash || '';
     if (/^#\/?workspace\//i.test(currentHash)) {
@@ -527,6 +649,9 @@ class WorkspaceApp {
     this.workspaces = listWorkspaces();
     this.activeWorkspaceId = null;
     this.currentJoinSearch = '';
+    this.libraryMessage = null;
+    this.libraryMessageType = 'info';
+    this.libraryMessageTimer = null;
     this.flowState = {
       step: 'mode',
       mode: null,
@@ -994,6 +1119,7 @@ class WorkspaceApp {
     }
   }
 
+  // Finalise workspace creation by persisting and updating local state.
   async completeWorkspaceSetup({ password, twoFactor }) {
     const draft = this.flowState.draft;
     if (!draft) {
@@ -1045,7 +1171,9 @@ class WorkspaceApp {
       createdAt: now
     };
 
-    saveWorkspace(workspace);
+    if (!saveWorkspace(workspace)) {
+      throw new Error('Workspace could not be saved to local storage.');
+    }
 
     this.flowState.resultWorkspace = workspace;
     this.flowState.mode = 'create';
@@ -1294,6 +1422,7 @@ class WorkspaceApp {
     }
   }
 
+  // Apply membership changes locally once a join flow is successful.
   finalizeJoin(workspace) {
     const profile = getLocalWorkspaceProfile();
     const stored = readWorkspace(workspace.id) || workspace;
@@ -1309,7 +1438,9 @@ class WorkspaceApp {
       });
     }
 
-    saveWorkspace(safeWorkspace);
+    if (!saveWorkspace(safeWorkspace)) {
+      throw new Error('Workspace membership could not be persisted.');
+    }
 
     this.flowState.resultWorkspace = safeWorkspace;
     this.flowState.joinTarget = safeWorkspace;
@@ -1408,6 +1539,7 @@ class WorkspaceApp {
 
     if (!workspaces.length) {
       this.librarySection.innerHTML = `
+        ${this.renderLibraryMessage()}
         <div class="workspace-empty">
           <div class="empty-illustration">🌟</div>
           <h2>No workspaces yet</h2>
@@ -1468,6 +1600,7 @@ class WorkspaceApp {
     }).join('');
 
     this.librarySection.innerHTML = `
+      ${this.renderLibraryMessage()}
       <div class="workspace-grid__header">
         <h3>Your workspaces</h3>
         <button type="button" class="btn-secondary small" data-action="start-create">
@@ -1567,6 +1700,53 @@ class WorkspaceApp {
         delete button.dataset.originalLabel;
       }
     }
+  }
+
+  // Render a contextual banner above the workspace list to guide troubleshooting.
+  renderLibraryMessage() {
+    if (!this.libraryMessage) {
+      return '';
+    }
+    const variant = this.libraryMessageType || 'info';
+    return `
+      <div class="workspace-message" data-variant="${escapeHTML(variant)}" role="alert">
+        ${escapeHTML(this.libraryMessage)}
+      </div>
+    `;
+  }
+
+  // Helper used by flows to queue a temporary status or error message.
+  setLibraryMessage(message, type = 'info', { autoClear = true } = {}) {
+    this.libraryMessage = message || null;
+    this.libraryMessageType = type;
+    if (this.libraryMessageTimer) {
+      clearTimeout(this.libraryMessageTimer);
+      this.libraryMessageTimer = null;
+    }
+    if (this.librarySection) {
+      this.renderWorkspaceList(this.workspaces);
+    }
+    if (this.libraryMessage && autoClear) {
+      this.libraryMessageTimer = setTimeout(() => this.clearLibraryMessage(), 4000);
+    }
+  }
+
+  // Remove any active status banner and refresh the library list.
+  clearLibraryMessage() {
+    this.libraryMessage = null;
+    this.libraryMessageType = 'info';
+    if (this.libraryMessageTimer) {
+      clearTimeout(this.libraryMessageTimer);
+      this.libraryMessageTimer = null;
+    }
+    if (this.librarySection) {
+      this.renderWorkspaceList(this.workspaces);
+    }
+  }
+
+  // Surface workspace access problems in the library panel for quick debugging.
+  showWorkspaceAccessError(message) {
+    this.setLibraryMessage(message, 'error');
   }
 
   clearFormErrors(form) {
