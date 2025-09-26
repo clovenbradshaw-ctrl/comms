@@ -2,6 +2,13 @@ const WORKSPACE_STORAGE_PREFIX = 'workspace_';
 const ACTIVE_WORKSPACE_KEY = 'workspace_active';
 const LOCAL_PROFILE_KEY = 'workspace_profile';
 
+function normalizeWorkspaceCode(value) {
+  if (!value) {
+    return '';
+  }
+  return String(value).replace(/[^a-z0-9]/gi, '').toUpperCase();
+}
+
 function generateSecureId() {
   const array = new Uint8Array(12);
   crypto.getRandomValues(array);
@@ -26,7 +33,7 @@ function generateWorkspaceId() {
 }
 
 function generateInviteCode() {
-  return generateRandomSegment(6);
+  return normalizeWorkspaceCode(generateRandomSegment(6));
 }
 
 function getLocalWorkspaceProfile() {
@@ -97,7 +104,7 @@ function ensureWorkspaceShape(workspace) {
   safeWorkspace.type = workspace.type || 'public';
   safeWorkspace.requests = Array.isArray(workspace.requests) ? workspace.requests : [];
   safeWorkspace.inviteCode = typeof workspace.inviteCode === 'string' && workspace.inviteCode.trim()
-    ? workspace.inviteCode.trim().toUpperCase()
+    ? normalizeWorkspaceCode(workspace.inviteCode)
     : generateInviteCode();
   return safeWorkspace;
 }
@@ -191,13 +198,13 @@ function getWorkspaceByInvite(code) {
   if (!code) {
     return null;
   }
-  const normalized = code.replace(/[^a-z0-9]/gi, '').toUpperCase();
+  const normalized = normalizeWorkspaceCode(code);
   if (!normalized) {
     return null;
   }
   const all = listWorkspaces();
-  return all.find(workspace => workspace.id.toUpperCase() === normalized
-    || workspace.inviteCode === normalized);
+  return all.find(workspace => normalizeWorkspaceCode(workspace.id) === normalized
+    || normalizeWorkspaceCode(workspace.inviteCode) === normalized);
 }
 
 function renderHeroStats(statsEl, workspaces = []) {
